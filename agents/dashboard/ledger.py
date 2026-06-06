@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS pr_status (
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(_SCHEMA)
     conn.row_factory = sqlite3.Row
     return conn
