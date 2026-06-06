@@ -46,6 +46,20 @@ Configure in `agents/config.json`:
 | `base_branch` | branch agent work integrates into |
 | `verify_command` | run in the worktree before integrating; failure → `failed/` |
 | `agent_command` | template; placeholders `{plan_path}` `{branch}` `{worktree}` `{verify_command}` |
+| `dashboard_port` | HTTP port (default 8787) |
+| `dashboard_poll_interval_seconds` | dashboard dir poll cadence (default 3) |
+| `dashboard_pr_sweep_interval_seconds` | dashboard PR sweep cadence (default 60) |
+| `dashboard_db` | path to dashboard SQLite db (default `agents/dashboard.db`) |
+
+## Dashboard
+
+```bash
+python3 agents/dashboard.py   # read-only web UI + background pollers
+```
+
+The dashboard binds `127.0.0.1` only and serves a live board at `/`. It is
+read-only: the only write is to the `dashboard.db` SQLite file (derived state,
+gitignored). The two example plans in `done/` are visible immediately.
 
 ## Operational notes / v1 limitations
 
