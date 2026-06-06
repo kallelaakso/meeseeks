@@ -58,6 +58,37 @@ class TestConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_config(self._write(bad))
 
+    def test_dashboard_defaults(self):
+        cfg = load_config(self._write(VALID))
+        self.assertEqual(cfg.dashboard_port, 8787)
+        self.assertEqual(cfg.dashboard_poll_interval_seconds, 3.0)
+        self.assertEqual(cfg.dashboard_pr_sweep_interval_seconds, 60.0)
+        self.assertEqual(cfg.dashboard_db, "agents/dashboard.db")
+
+    def test_dashboard_overrides(self):
+        data = {
+            **VALID,
+            "dashboard_port": 8080,
+            "dashboard_poll_interval_seconds": 5.0,
+            "dashboard_pr_sweep_interval_seconds": 120.0,
+            "dashboard_db": "agents/other.db",
+        }
+        cfg = load_config(self._write(data))
+        self.assertEqual(cfg.dashboard_port, 8080)
+        self.assertEqual(cfg.dashboard_poll_interval_seconds, 5.0)
+        self.assertEqual(cfg.dashboard_pr_sweep_interval_seconds, 120.0)
+        self.assertEqual(cfg.dashboard_db, "agents/other.db")
+
+    def test_rejects_non_positive_dashboard_port(self):
+        bad = {**VALID, "dashboard_port": 0}
+        with self.assertRaises(ValueError):
+            load_config(self._write(bad))
+
+    def test_rejects_too_small_dashboard_poll_interval(self):
+        bad = {**VALID, "dashboard_poll_interval_seconds": 0.05}
+        with self.assertRaises(ValueError):
+            load_config(self._write(bad))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,8 +69,10 @@ A plan is claimed only once every `depends-on` id has landed in `done/`.
 ```bash
 python3 agents/run_once.py    # claim + run the next eligible plan (manual)
 python3 agents/daemon.py      # poll ready-for-work/ forever, up to max_concurrency
-cd agents && python3 -m unittest discover -s tests
+python3 agents/dashboard.py   # read-only web UI + background pollers
 ```
+
+cd agents && python3 -m unittest discover -s tests
 
 See [`agents/README.md`](agents/README.md) for config keys and operational
 limitations (primary-checkout ownership, crash recovery, failed-state cleanup).

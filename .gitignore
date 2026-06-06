@@ -1,5 +1,7 @@
 .worktrees/
 agents/logs/
+agents/dashboard.db
+agents/dashboard.db-*
 __pycache__/
 *.pyc
 .DS_Store
