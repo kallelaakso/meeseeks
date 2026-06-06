@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,13 +12,20 @@
     <h1>Dashboard</h1>
     <p id="pr-checked-at"></p>
     <div id="needs-attention"></div>
-    <div id="board"></div>
-    <details>
-      <summary>Archive</summary>
-      <div id="archive"></div>
-    </details>
+    <div id="invalid"></div>
+    <h2>State changes</h2>
+    <table id="changes">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Plan</th>
+          <th>Change</th>
+          <th>Kind</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
     <div id="specs"></div>
-    <div id="events"></div>
   </main>
 
   <dialog id="detail-modal">
@@ -81,75 +88,49 @@
       openModal(data.filename, body);
     };
 
-    const renderCard = (plan) => {
-      return `
-        <div class="card">
-          <h5><a href="#" class="plan-link" data-plan-id="${plan.id}">${plan.id}</a></h5>
-          <p>${plan.spec ? `<a href="#" class="spec-link" data-spec="${plan.spec}">${plan.spec}</a>` : 'no spec'}</p>
-          <p>depends-on: ${plan.depends_on.join(', ') || 'none'}</p>
-          <p>${plan.time_in_state_seconds !== null ? `${Math.round(plan.time_in_state_seconds)}s` : ''}</p>
-          ${plan.pr ? `<span class="badge pr-${plan.pr.state.toLowerCase()}"><a href="${plan.pr.url}" target="_blank">${plan.pr.state}</a></span>` : ''}
-        </div>
-      `;
+    const kindOf = (t) => {
+      if (t.is_baseline || t.from_state === null) return 'baseline';
+      if (t.to_state === 'failed' || t.to_state === 'closed') return 'problem';
+      if (t.to_state === 'awaiting-merge') return 'review';
+      if (['drafts','ready-for-work','in-progress','done'].includes(t.to_state))
+        return 'progress';
+      return 'baseline';
     };
 
-    const renderBoard = (data) => {
-      const board = document.getElementById('board');
-      const needs = document.getElementById('needs-attention');
-      const archive = document.getElementById('archive');
-      const specs = document.getElementById('specs');
-      const events = document.getElementById('events');
-      const prCheckedAt = document.getElementById('pr-checked-at');
-
-      prCheckedAt.textContent = data.pr_checked_at ? `PR status as of ${data.pr_checked_at}` : '';
-
-      const attention = (data.plans['awaiting-merge'] || []).filter(p => p.pr && p.pr.state === 'OPEN');
+    const renderNeedsAttention = (plans, prCheckedAt) => {
+      const el = document.getElementById('needs-attention');
+      const prEl = document.getElementById('pr-checked-at');
+      prEl.textContent = prCheckedAt ? `PR status as of ${prCheckedAt}` : '';
+      const attention = (plans['awaiting-merge'] || []).filter(p => p.pr && p.pr.state === 'OPEN');
       if (attention.length) {
-        needs.innerHTML = '<h2>Needs attention</h2>' + attention.map(p => `
+        el.innerHTML = '<h2>Needs attention</h2>' + attention.map(p => `
           <div class="attention-item">
             <a href="${p.pr.url}" target="_blank">${p.id}</a> — PR is OPEN
           </div>
         `).join('');
       } else {
-        needs.innerHTML = '';
+        el.innerHTML = '';
       }
+    };
 
-      const order = ['drafts', 'ready-for-work', 'in-progress', 'awaiting-merge', 'done'];
-      const boardHtml = '<div class="board-grid">' + order.map(state => {
-        const plans = data.plans[state] || [];
-        return `
-          <div class="column">
-            <h3>${state}</h3>
-            <div class="column-body">${plans.map(renderCard).join('')}</div>
-          </div>
-        `;
-      }).join('') + '</div>';
-      board.innerHTML = boardHtml;
-
-      if (data.invalid && data.invalid.length) {
-        const banner = document.createElement('div');
-        banner.className = 'invalid-banner';
-        banner.innerHTML = '<h2>Invalid plans</h2>' + data.invalid.map(i => `
+    const renderInvalid = (invalids) => {
+      const el = document.getElementById('invalid');
+      if (invalids && invalids.length) {
+        el.innerHTML = '<div class="invalid-banner"><h2>Invalid plans</h2>' + invalids.map(i => `
           <div class="invalid-card">
             <span class="badge warning">invalid</span>
             ${i.filename} in ${i.state}: ${i.error}
           </div>
-        `).join('');
-        board.prepend(banner);
-      }
-
-      const archivePlans = [
-        ...(data.plans['failed'] || []),
-        ...(data.plans['closed'] || [])
-      ];
-      if (archivePlans.length) {
-        archive.innerHTML = archivePlans.map(renderCard).join('');
+        `).join('') + '</div>';
       } else {
-        archive.innerHTML = '<p>Nothing archived.</p>';
+        el.innerHTML = '';
       }
+    };
 
-      if (data.specs && data.specs.length) {
-        specs.innerHTML = '<h2>Specs</h2><div class="spec-list">' + data.specs.map(s => `
+    const renderSpecs = (specs) => {
+      const el = document.getElementById('specs');
+      if (specs && specs.length) {
+        el.innerHTML = '<h2>Specs</h2><div class="spec-list">' + specs.map(s => `
           <div class="spec-card">
             <span class="badge spec-${s.status}">${s.status}</span>
             <a href="#" class="spec-link" data-spec="${s.filename}">${s.filename}</a>
@@ -157,16 +138,28 @@
           </div>
         `).join('') + '</div>';
       } else {
-        specs.innerHTML = '';
+        el.innerHTML = '';
       }
+    };
 
-      if (data.events && data.events.length) {
-        events.innerHTML = '<h2>Activity</h2><ul>' + data.events.map(e => `
-          <li>${e.plan_id}: ${e.from_state || 'null'} → ${e.to_state} @ ${e.observed_at}</li>
-        `).join('') + '</ul>';
-      } else {
-        events.innerHTML = '';
+    const renderChanges = (events) => {
+      const tbody = document.querySelector('#changes tbody');
+      if (!events || !events.length) {
+        tbody.innerHTML = '<tr><td colspan="4">No state changes recorded yet.</td></tr>';
+        return;
       }
+      tbody.innerHTML = events.map(t => {
+        const kind = kindOf(t);
+        const time = new Date(t.observed_at).toLocaleString();
+        return `
+          <tr>
+            <td title="${t.observed_at}">${time}</td>
+            <td><a href="#" class="plan-link" data-plan-id="${t.plan_id}">${t.plan_id}</a></td>
+            <td>${t.from_state ?? '—'} → ${t.to_state}</td>
+            <td><span class="badge kind-${kind}">${kind}</span></td>
+          </tr>
+        `;
+      }).join('');
     };
 
     document.addEventListener('click', (e) => {
@@ -188,12 +181,15 @@
       try {
         const [boardRes, eventsRes] = await Promise.all([
           fetch('/api/board'),
-          fetch('/api/events?limit=20'),
+          fetch('/api/events'),
         ]);
         if (boardRes.ok) {
           const boardData = await boardRes.json();
           const eventsData = eventsRes.ok ? await eventsRes.json() : [];
-          renderBoard({ ...boardData, events: eventsData });
+          renderNeedsAttention(boardData.plans, boardData.pr_checked_at);
+          renderInvalid(boardData.invalid);
+          renderChanges(eventsData);
+          renderSpecs(boardData.specs);
         }
       } catch (err) {
         console.error('poll error', err);
