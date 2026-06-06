@@ -10,6 +10,8 @@ A reusable, spec-driven setup for shipping features with AI agents. Two tiers:
 A Python daemon (`agents/`) orchestrates the implementers: claim → run →
 verify → integrate.
 
+**NOTE:** This is experimental project for my private use. Please don't expect it to be stable.
+
 ## Prerequisites
 
 - Python 3.7+
