@@ -26,6 +26,8 @@ class Context:
     static_dir: Path
 
 
+MAX_EVENTS = 2000
+
 _STATE_ORDER = [
     "drafts",
     "ready-for-work",
@@ -173,14 +175,20 @@ def _api_spec(filename: str, ctx: Context) -> tuple[int, bytes, str]:
 
 
 def _api_events(query: dict[str, list[str]], ctx: Context) -> tuple[int, bytes, str]:
-    limit = 50
+    limit = MAX_EVENTS
     if "limit" in query:
-        try:
-            limit = int(query["limit"][0])
-            if limit < 1:
-                limit = 1
-        except (ValueError, IndexError):
-            pass
+        raw = query["limit"][0]
+        if raw == "all":
+            limit = MAX_EVENTS
+        else:
+            try:
+                limit = int(raw)
+                if limit <= 0:
+                    limit = MAX_EVENTS
+                else:
+                    limit = min(limit, MAX_EVENTS)
+            except (ValueError, IndexError):
+                limit = MAX_EVENTS
     conn = connect(ctx.db_path)
     try:
         events = recent_transitions(conn, limit=limit)

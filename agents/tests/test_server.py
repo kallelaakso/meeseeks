@@ -156,6 +156,82 @@ class TestServer(unittest.TestCase):
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["to_state"], "done")
 
+    def test_api_events_no_limit(self):
+        self._plan(
+            self.layout.ready,
+            "a.md",
+            "---\nid: alpha\ndepends-on: []\n---\n",
+        )
+        for i in range(55):
+            record_transition(
+                self.conn,
+                "alpha",
+                "ready",
+                "in-progress",
+                observed_at=f"2026-01-{i+1:02d}T00:00:00Z",
+            )
+        status, body, ct = handle("/api/events", {}, self.ctx)
+        data = self._json(status, body)
+        self.assertEqual(len(data), 55)
+        self.assertEqual(data[0]["observed_at"], "2026-01-55T00:00:00Z")
+
+    def test_api_events_limit_all(self):
+        self._plan(
+            self.layout.ready,
+            "a.md",
+            "---\nid: alpha\ndepends-on: []\n---\n",
+        )
+        for i in range(55):
+            record_transition(
+                self.conn,
+                "alpha",
+                "ready",
+                "in-progress",
+                observed_at=f"2026-01-{i+1:02d}T00:00:00Z",
+            )
+        status, body, ct = handle("/api/events", {"limit": ["all"]}, self.ctx)
+        data = self._json(status, body)
+        self.assertEqual(len(data), 55)
+        self.assertEqual(data[0]["observed_at"], "2026-01-55T00:00:00Z")
+
+    def test_api_events_limit_explicit(self):
+        self._plan(
+            self.layout.ready,
+            "a.md",
+            "---\nid: alpha\ndepends-on: []\n---\n",
+        )
+        for i in range(10):
+            record_transition(
+                self.conn,
+                "alpha",
+                "ready",
+                "in-progress",
+                observed_at=f"2026-01-{i+1:02d}T00:00:00Z",
+            )
+        status, body, ct = handle("/api/events", {"limit": ["5"]}, self.ctx)
+        data = self._json(status, body)
+        self.assertEqual(len(data), 5)
+        self.assertEqual(data[0]["observed_at"], "2026-01-10T00:00:00Z")
+
+    def test_api_events_max_cap(self):
+        self._plan(
+            self.layout.ready,
+            "a.md",
+            "---\nid: alpha\ndepends-on: []\n---\n",
+        )
+        rows = [
+            ("alpha", "ready", "in-progress", f"2026-01-{i % 31 + 1:02d}T{i:04d}:00:00Z", 0)
+            for i in range(2005)
+        ]
+        self.conn.executemany(
+            "INSERT INTO transitions (plan_id, from_state, to_state, observed_at, is_baseline) VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        self.conn.commit()
+        status, body, ct = handle("/api/events", {}, self.ctx)
+        data = self._json(status, body)
+        self.assertEqual(len(data), 2000)
+
     def test_static_index(self):
         (self.static_dir / "index.html").write_text("<h1>hello</h1>")
         status, body, ct = handle("/", {}, self.ctx)
