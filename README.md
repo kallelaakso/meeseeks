@@ -85,3 +85,11 @@ same flow. Copy the repo (or its structure), then:
   project's tooling, and set `integration_mode` (`pr` or `auto-merge`) and
   `base_branch`.
 - Drop specs in `docs/spec/`, plans in `docs/plan/`, and start the daemon.
+
+## Contributing
+
+Bug reports and ideas welcome via issues. See the templates under `.github/`.
+
+## License
+
+[MIT](LICENSE) © Kalle Laakso
