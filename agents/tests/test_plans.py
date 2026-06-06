@@ -55,6 +55,16 @@ class TestPlans(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_plan(p)
 
+    def test_parse_spec_present(self):
+        d = Path(tempfile.mkdtemp())
+        p = self._plan(d, "a.md", "---\nid: alpha\nspec: foo-design.md\n---\nbody\n")
+        self.assertEqual(parse_plan(p).spec, "foo-design.md")
+
+    def test_parse_spec_missing(self):
+        d = Path(tempfile.mkdtemp())
+        p = self._plan(d, "a.md", "---\nid: alpha\n---\nbody\n")
+        self.assertIsNone(parse_plan(p).spec)
+
     def test_eligible_only_when_deps_done(self):
         root = Path(tempfile.mkdtemp())
         ready = root / "ready"

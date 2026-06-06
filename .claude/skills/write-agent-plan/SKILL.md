@@ -11,6 +11,7 @@ Plans implemented by the autonomous agents MUST start with this frontmatter:
 ---
 id: <unique-kebab-slug>
 depends-on: [other-id, another-id]   # omit or use [] if none
+spec: <filename.md>                  # optional, links plan to its design spec
 ---
 ```
 
@@ -19,6 +20,9 @@ Rules:
 - `depends-on` is an **inline** list only: `[a, b]`. Block lists are not supported.
 - Each id in `depends-on` must match the `id` of another plan. An agent only
   claims this plan once every dependency's file is in `docs/plan/done/`.
+- `spec` is optional. When present it names a file in `docs/spec/` and links
+  the plan to its design spec for dashboard rollup. One spec may be referenced
+  by many plans.
 - The body after the second `---` is the implementation plan markdown the agent
   reads and executes.
 

@@ -13,6 +13,7 @@ class Plan:
     id: str
     depends_on: list[str]
     path: Path
+    spec: str | None = None
 
 
 def _parse_frontmatter(text: str) -> dict[str, str]:
@@ -44,7 +45,10 @@ def parse_plan(path: Path) -> Plan:
     if "id" not in fields or not fields["id"]:
         raise ValueError(f"plan {path} missing required 'id'")
     deps = _parse_deps(fields.get("depends-on", ""))
-    return Plan(id=fields["id"], depends_on=deps, path=Path(path))
+    return Plan(
+        id=fields["id"], depends_on=deps, path=Path(path),
+        spec=fields.get("spec") or None,
+    )
 
 
 def list_plans(directory: Path) -> list[Plan]:
