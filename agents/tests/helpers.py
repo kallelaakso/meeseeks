@@ -13,7 +13,9 @@ def make_layout(root: Path) -> Layout:
     for d in (
         layout.ready,
         layout.in_progress,
+        layout.awaiting_merge,
         layout.done,
+        layout.closed,
         layout.failed,
         layout.worktrees,
         layout.logs,

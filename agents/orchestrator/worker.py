@@ -5,36 +5,25 @@ from pathlib import Path
 
 from orchestrator.claim import claim
 from orchestrator.config import Config
+from orchestrator.fsops import append_log, move_into
 from orchestrator.integrate import integrate
 from orchestrator.layout import Layout
 from orchestrator.plans import Plan
 from orchestrator.worktree import create_worktree, remove_worktree
 
 
-def _move(src: Path, dest_dir: Path) -> Path:
-    dest = dest_dir / src.name
-    src.rename(dest)
-    return dest
-
-
-def _log(log_path: Path, message: str) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a") as log:
-        log.write(f"[orchestrator] {message}\n")
-
-
 def _run_agent(command: str, cwd: Path, log_path: Path) -> bool:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    _log(log_path, f"running agent in {cwd}: {command}")
+    append_log(log_path, f"running agent in {cwd}: {command}")
     with log_path.open("a") as log:
         proc = subprocess.run(command, cwd=str(cwd), shell=True,
                               stdout=log, stderr=subprocess.STDOUT, text=True)
-    _log(log_path, f"agent exited with code {proc.returncode}")
+    append_log(log_path, f"agent exited with code {proc.returncode}")
     return proc.returncode == 0
 
 
 # Worker exit codes -> outcome, so a parent process can report results.
-EXIT_CODE = {"done": 0, "failed": 2, "skipped": 3}
+EXIT_CODE = {"done": 0, "awaiting-merge": 4, "failed": 2, "skipped": 3}
 OUTCOME = {code: name for name, code in EXIT_CODE.items()}
 
 
@@ -57,8 +46,8 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
         wt, branch = create_worktree(layout.repo, layout.worktrees,
                                      plan.id, config.base_branch)
     except subprocess.CalledProcessError as exc:
-        _log(log_path, f"FAILED creating worktree: {exc}")
-        _move(claimed, layout.failed)
+        append_log(log_path, f"FAILED creating worktree: {exc}")
+        move_into(claimed, layout.failed)
         return "failed"
 
     command = config.agent_command.format(
@@ -75,8 +64,12 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
     )
 
     if integrated:
-        _log(log_path, "DONE: agent succeeded and changes integrated")
-        _move(claimed, layout.done)
+        if config.integration_mode == "pr":
+            append_log(log_path, "PR opened; awaiting human merge")
+            move_into(claimed, layout.awaiting_merge)
+            return "awaiting-merge"
+        append_log(log_path, "DONE: agent succeeded and changes integrated")
+        move_into(claimed, layout.done)
         try:
             remove_worktree(layout.repo, wt)
         except subprocess.CalledProcessError:
@@ -85,6 +78,6 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
 
     # Failure: keep worktree + branch + log for debugging.
     reason = "integration failed" if agent_ok else "agent failed"
-    _log(log_path, f"FAILED: {reason} (worktree {wt} kept on branch {branch})")
-    _move(claimed, layout.failed)
+    append_log(log_path, f"FAILED: {reason} (worktree {wt} kept on branch {branch})")
+    move_into(claimed, layout.failed)
     return "failed"

@@ -26,7 +26,7 @@ def main() -> int:
     print(result or "no eligible plans")
     if result == "failed":
         print(f"see logs in {layout.logs}")
-    return 0 if result in ("done", None) else 1
+    return 0 if result in ("done", "awaiting-merge", None) else 1
 
 
 if __name__ == "__main__":
