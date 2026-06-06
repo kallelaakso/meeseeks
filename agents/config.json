@@ -4,6 +4,6 @@
   "integration_mode": "pr",
   "base_branch": "main",
   "verify_command": "true",
-  "agent_command": "opencode run -m opencode-go/kimi-k2.6 \"Implement the plan at {plan_path}. CWD is a clean git worktree on branch {branch}. When done, ensure '{verify_command}' passes.\"",
+  "agent_command": "opencode run -m opencode-go/kimi-k2.6 \"Implement the plan at {plan_path}, relative to your current directory. You are in a clean git worktree at {worktree} on branch {branch}. All plan paths are relative to this worktree — make ALL changes here and do not touch any directory outside it. When done, ensure '{verify_command}' passes. Do NOT commit; the orchestrator commits for you.\"",
   "merge_sweep_interval_seconds": 300
 }

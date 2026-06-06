@@ -12,6 +12,30 @@ from orchestrator.plans import Plan
 from orchestrator.worktree import create_worktree, remove_worktree
 
 
+def _commit_worktree(wt: Path, plan_id: str, base_branch: str,
+                     log_path: Path) -> bool:
+    """Commit any agent changes in the worktree; require a commit over base.
+
+    Handles all agent behaviors: leaves changes dirty (we commit them), commits
+    itself (nothing left to stage), or does nothing / edited elsewhere (no
+    commit over base -> fail fast with a clear message).
+    """
+    subprocess.run(["git", "-C", str(wt), "add", "-A"], check=True,
+                   capture_output=True, text=True)
+    staged = subprocess.run(["git", "-C", str(wt), "diff", "--cached", "--quiet"])
+    if staged.returncode != 0:  # something staged
+        subprocess.run(["git", "-C", str(wt), "commit", "-m", f"implement {plan_id}"],
+                       check=True, capture_output=True, text=True)
+    ahead = subprocess.run(
+        ["git", "-C", str(wt), "rev-list", "--count", f"{base_branch}..HEAD"],
+        capture_output=True, text=True,
+    )
+    if ahead.stdout.strip() == "0":
+        append_log(log_path, "agent produced no commits — nothing to integrate")
+        return False
+    return True
+
+
 def _run_agent(command: str, cwd: Path, log_path: Path) -> bool:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     append_log(log_path, f"running agent in {cwd}: {command}")
@@ -50,14 +74,20 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
         move_into(claimed, layout.failed)
         return "failed"
 
+    plan_copy = wt / "PLAN.md"
+    plan_copy.write_text(claimed.read_text())
+
     command = config.agent_command.format(
-        plan_path=str(claimed.resolve()),
+        plan_path="PLAN.md",
         branch=branch,
         worktree=str(wt),
         verify_command=config.verify_command,
     )
 
     agent_ok = _run_agent(command, wt, log_path)
+    if agent_ok:
+        plan_copy.unlink(missing_ok=True)
+        agent_ok = _commit_worktree(wt, plan.id, config.base_branch, log_path)
     integrated = agent_ok and integrate(
         config.integration_mode, layout.repo, wt, branch,
         config.base_branch, config.verify_command, log_path,
