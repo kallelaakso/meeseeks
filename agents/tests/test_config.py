@@ -44,6 +44,20 @@ class TestConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_config(self._write(bad))
 
+    def test_optional_merge_sweep_interval_defaults_to_300(self):
+        cfg = load_config(self._write(VALID))
+        self.assertEqual(cfg.merge_sweep_interval_seconds, 300)
+
+    def test_explicit_merge_sweep_interval_is_honored(self):
+        data = {**VALID, "merge_sweep_interval_seconds": 60}
+        cfg = load_config(self._write(data))
+        self.assertEqual(cfg.merge_sweep_interval_seconds, 60)
+
+    def test_rejects_non_positive_merge_sweep_interval(self):
+        bad = {**VALID, "merge_sweep_interval_seconds": 0}
+        with self.assertRaises(ValueError):
+            load_config(self._write(bad))
+
 
 if __name__ == "__main__":
     unittest.main()

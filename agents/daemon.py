@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from orchestrator.config import Config, load_config
 from orchestrator.layout import Layout
+from orchestrator.merge import sweep_pending_merges
 from orchestrator.plans import eligible_plans
 from orchestrator.worker import OUTCOME, run_plan_as_process
 
@@ -28,7 +29,7 @@ def poll_once(layout: Layout, config: Config, running: dict[str, Process]) -> No
         proc.join()
         outcome = OUTCOME.get(proc.exitcode, f"crashed (exit {proc.exitcode})")
         line = f"daemon: {plan_id} -> {outcome}"
-        if outcome != "done":
+        if outcome not in ("done", "awaiting-merge"):
             line += f" (see {layout.logs / f'{plan_id}.log'})"
         print(line)
     # Fill free slots with eligible, not-already-running plans.
@@ -45,10 +46,16 @@ def main() -> int:
     layout = Layout.under(repo)
     config = load_config(repo / "agents" / "config.json")
     running: dict[str, Process] = {}
+    last_sweep = 0.0  # 0 forces a sweep on the first iteration
     print(f"daemon: polling {layout.ready} every {config.poll_interval_seconds}s "
-          f"(max_concurrency={config.max_concurrency}, mode={config.integration_mode})")
+          f"(max_concurrency={config.max_concurrency}, mode={config.integration_mode}, "
+          f"merge_sweep_interval={config.merge_sweep_interval_seconds}s)")
     try:
         while True:
+            now = time.monotonic()
+            if now - last_sweep >= config.merge_sweep_interval_seconds:
+                sweep_pending_merges(layout)
+                last_sweep = now
             poll_once(layout, config, running)
             time.sleep(config.poll_interval_seconds)
     except KeyboardInterrupt:

@@ -10,7 +10,11 @@ worktrees.
    `write-agent-plan` skill enforces the required frontmatter).
 2. When happy, move the plan to `docs/plan/ready-for-work/`.
 3. The daemon claims it → `in-progress/`, runs the agent in a worktree, verifies,
-   integrates, then moves it to `done/` (or `failed/`).
+   then integrates.
+   - `auto-merge` mode: merges into `base_branch` and moves the plan to `done/`
+   - `pr` mode: opens a PR and moves the plan to `awaiting-merge/`. Once the PR
+     is merged it advances to `done/`; if closed unmerged it moves to `closed/`.
+   - On failure at any step, the plan lands in `failed/`.
 
 Plan state is **only** the directory the file lives in. Plan frontmatter:
 
@@ -37,6 +41,7 @@ Configure in `agents/config.json`:
 |---|---|
 | `max_concurrency` | max parallel workers |
 | `poll_interval_seconds` | daemon poll cadence |
+| `merge_sweep_interval_seconds` | how often to check PR state for awaiting-merge plans (daemon only) |
 | `integration_mode` | `auto-merge` or `pr` |
 | `base_branch` | branch agent work integrates into |
 | `verify_command` | run in the worktree before integrating; failure → `failed/` |
@@ -51,9 +56,13 @@ Configure in `agents/config.json`:
 - **No crash recovery for `in-progress/`.** If a worker process is killed between
   claiming and finishing, its plan is stranded in `in-progress/`. Recover
   manually: inspect, then move it back to `ready-for-work/`.
-- **`failed/` keeps the worktree + branch + `agents/logs/<id>.log`** for
-  debugging. Clean up `.worktrees/<id>` yourself after inspecting.
+- **`failed/` and `closed/` keep the worktree + branch + `agents/logs/<id>.log`**
+  for debugging. Clean up `.worktrees/<id>` yourself after inspecting.
+- **A dependency is satisfied only once its PR is merged.** `eligible_plans`
+  looks at `done/` (not `awaiting-merge/`), so a dependent plan won't start until
+  the dependency's PR is actually merged.
 - **Filename collisions overwrite.** Re-using a plan filename that already exists
-  in `done/`/`failed/` overwrites the prior file. Keep plan filenames unique.
+  in `done/`/`failed/`/`closed/` overwrites the prior file. Keep plan filenames
+  unique.
 - **`done/` is kept forever** (audit trail); `eligible_plans` re-parses it each
   poll — fine at modest scale.

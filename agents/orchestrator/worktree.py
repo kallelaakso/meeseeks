@@ -16,6 +16,10 @@ def _git_quiet(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
 
 
+def branch_name(slug: str) -> str:
+    return f"plan/{slug}"
+
+
 def create_worktree(repo: Path, worktrees_dir: Path, slug: str,
                     base_branch: str) -> tuple[Path, str]:
     """Create a worktree on a fresh branch plan/<slug> based on base_branch.
@@ -24,7 +28,7 @@ def create_worktree(repo: Path, worktrees_dir: Path, slug: str,
     debugging, which would otherwise make `git worktree add` collide. So we
     discard any leftover worktree/branch for this slug before recreating.
     """
-    branch = f"plan/{slug}"
+    branch = branch_name(slug)
     wt = Path(worktrees_dir) / slug
     if wt.exists():
         _git_quiet(repo, "worktree", "remove", "--force", str(wt))

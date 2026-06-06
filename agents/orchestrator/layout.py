@@ -11,7 +11,9 @@ class Layout:
     repo: Path
     ready: Path
     in_progress: Path
+    awaiting_merge: Path
     done: Path
+    closed: Path
     failed: Path
     worktrees: Path
     logs: Path
@@ -23,7 +25,9 @@ class Layout:
             repo=repo,
             ready=plan / "ready-for-work",
             in_progress=plan / "in-progress",
+            awaiting_merge=plan / "awaiting-merge",
             done=plan / "done",
+            closed=plan / "closed",
             failed=plan / "failed",
             worktrees=repo / ".worktrees",
             logs=repo / "agents" / "logs",
