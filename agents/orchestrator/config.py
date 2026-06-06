@@ -16,6 +16,7 @@ class Config:
     verify_command: str
     agent_command: str
     merge_sweep_interval_seconds: int = 300
+    remote: str = "origin"
 
 
 def load_config(path: Path) -> Config:

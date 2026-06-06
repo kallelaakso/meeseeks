@@ -9,10 +9,10 @@ from orchestrator.fsops import append_log, move_into
 from orchestrator.integrate import integrate
 from orchestrator.layout import Layout
 from orchestrator.plans import Plan
-from orchestrator.worktree import create_worktree, remove_worktree
+from orchestrator.worktree import create_worktree, fetch_base, remove_worktree, sync_base
 
 
-def _commit_worktree(wt: Path, plan_id: str, base_branch: str,
+def _commit_worktree(wt: Path, plan_id: str, base_ref: str,
                      log_path: Path) -> bool:
     """Commit any agent changes in the worktree; require a commit over base.
 
@@ -27,7 +27,7 @@ def _commit_worktree(wt: Path, plan_id: str, base_branch: str,
         subprocess.run(["git", "-C", str(wt), "commit", "-m", f"implement {plan_id}"],
                        check=True, capture_output=True, text=True)
     ahead = subprocess.run(
-        ["git", "-C", str(wt), "rev-list", "--count", f"{base_branch}..HEAD"],
+        ["git", "-C", str(wt), "rev-list", "--count", f"{base_ref}..HEAD"],
         capture_output=True, text=True,
     )
     if ahead.stdout.strip() == "0":
@@ -66,11 +66,24 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
         return "skipped"
 
     log_path = layout.logs / f"{plan.id}.log"
+    # In pr mode dependency merges land on the remote, not the local base, so
+    # branch off the freshly-fetched <remote>/<base> to inherit merged work. In
+    # auto-merge mode merges land on the local base; just pull in any work pushed
+    # to the remote elsewhere before branching off it.
+    base_ref = config.base_branch
     try:
+        if config.integration_mode == "pr":
+            fetch_base(layout.repo, config.remote, config.base_branch)
+            base_ref = f"{config.remote}/{config.base_branch}"
+        elif sync_base(layout.repo, config.remote, config.base_branch) == "diverged":
+            append_log(log_path,
+                       f"local {config.base_branch} diverged from "
+                       f"{config.remote}/{config.base_branch}; "
+                       "branching off local base (no fast-forward)")
         wt, branch = create_worktree(layout.repo, layout.worktrees,
-                                     plan.id, config.base_branch)
+                                     plan.id, base_ref)
     except subprocess.CalledProcessError as exc:
-        append_log(log_path, f"FAILED creating worktree: {exc}")
+        append_log(log_path, f"FAILED preparing worktree: {exc}")
         move_into(claimed, layout.failed)
         return "failed"
 
@@ -87,7 +100,7 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
     agent_ok = _run_agent(command, wt, log_path)
     if agent_ok:
         plan_copy.unlink(missing_ok=True)
-        agent_ok = _commit_worktree(wt, plan.id, config.base_branch, log_path)
+        agent_ok = _commit_worktree(wt, plan.id, base_ref, log_path)
     integrated = agent_ok and integrate(
         config.integration_mode, layout.repo, wt, branch,
         config.base_branch, config.verify_command, log_path,

@@ -11,13 +11,51 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _git_quiet(repo: Path, *args: str) -> None:
-    """Run a git command, ignoring failure (used for best-effort cleanup)."""
-    subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+def _git_quiet(repo: Path, *args: str) -> bool:
+    """Run a git command, ignoring failure. Returns True on success."""
+    proc = subprocess.run(["git", "-C", str(repo), *args],
+                          capture_output=True, text=True)
+    return proc.returncode == 0
 
 
 def branch_name(slug: str) -> str:
     return f"plan/{slug}"
+
+
+def fetch_base(repo: Path, remote: str, base_branch: str) -> None:
+    """Fetch the remote base branch. Raises on failure.
+
+    In pr mode a dependency's merge lands on the remote, not the local base, so a
+    dependent's worktree must branch off the freshly-fetched <remote>/<base> to
+    pick up that merged work — otherwise the agent redoes it and conflicts.
+    """
+    _git(repo, "fetch", remote, base_branch)
+
+
+def _is_ancestor(repo: Path, maybe_ancestor: str, ref: str) -> bool:
+    return _git_quiet(repo, "merge-base", "--is-ancestor", maybe_ancestor, ref)
+
+
+def sync_base(repo: Path, remote: str, base_branch: str) -> str:
+    """Best-effort fast-forward of local base_branch to <remote>/<base_branch>.
+
+    In auto-merge mode merges land on the local base, but it can fall behind if
+    work is pushed to the remote elsewhere. Pull that in before branching off it.
+    Returns one of: 'synced' (local now contains the remote tip), 'unreachable'
+    (remote/branch absent — auto-merge can run purely locally), or 'diverged'
+    (non-ff: caller falls back to local base; worth logging).
+    """
+    if not _git_quiet(repo, "fetch", remote, base_branch):
+        return "unreachable"
+    remote_ref = f"{remote}/{base_branch}"
+    if _is_ancestor(repo, remote_ref, base_branch):
+        return "synced"  # local already contains the remote tip
+    if _is_ancestor(repo, base_branch, remote_ref):
+        # Remote strictly ahead: ff the ref, or the working tree if checked out.
+        if not _git_quiet(repo, "fetch", remote, f"{base_branch}:{base_branch}"):
+            _git_quiet(repo, "merge", "--ff-only", remote_ref)
+        return "synced"
+    return "diverged"
 
 
 def create_worktree(repo: Path, worktrees_dir: Path, slug: str,

@@ -34,3 +34,15 @@ def init_repo(root: Path) -> None:
     (root / "README.md").write_text("init\n")
     run("add", "-A")
     run("commit", "-q", "-m", "init")
+
+
+def add_origin(root: Path) -> Path:
+    """Give root a bare 'origin' remote with main pushed. Returns the remote."""
+    remote = root.parent / f"{root.name}-origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                   check=True, capture_output=True, text=True)
+    run = lambda *a: subprocess.run(["git", "-C", str(root), *a], check=True,
+                                    capture_output=True, text=True)
+    run("remote", "add", "origin", str(remote))
+    run("push", "-q", "-u", "origin", "main")
+    return remote
