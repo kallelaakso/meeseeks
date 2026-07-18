@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from orchestrator.config import Config, load_config
 from orchestrator.layout import Layout
 from orchestrator.plans import eligible_plans
+from orchestrator.recovery import recover_stranded
 from orchestrator.worker import run_plan
 
 
@@ -22,6 +23,7 @@ def main() -> int:
     repo = Path(__file__).resolve().parents[1]
     layout = Layout.under(repo)
     config = load_config(repo / "agents" / "config.json")
+    recover_stranded(layout, config)
     result = run_next(layout, config)
     print(result or "no eligible plans")
     if result == "failed":

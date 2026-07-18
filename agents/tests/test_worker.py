@@ -12,7 +12,8 @@ from orchestrator.plans import parse_plan
 from orchestrator.worker import run_plan
 
 
-def _cfg(agent_command: str, verify: str = "true", mode: str = "auto-merge") -> Config:
+def _cfg(agent_command: str, verify: str = "true", mode: str = "auto-merge",
+         timeout: int = 1800) -> Config:
     return Config(
         max_concurrency=1,
         poll_interval_seconds=1,
@@ -20,6 +21,7 @@ def _cfg(agent_command: str, verify: str = "true", mode: str = "auto-merge") -> 
         base_branch="main",
         verify_command=verify,
         agent_command=agent_command,
+        agent_timeout_seconds=timeout,
     )
 
 
@@ -133,6 +135,15 @@ class TestWorker(unittest.TestCase):
             capture_output=True, text=True,
         )
         self.assertEqual(count.stdout.strip(), "1")
+
+    def test_agent_timeout_moves_plan_to_failed(self):
+        agent = "sleep 5"
+        result = run_plan(parse_plan(self.plan_path), self.layout,
+                          _cfg(agent, timeout=1))
+        self.assertEqual(result, "failed")
+        self.assertTrue((self.layout.failed / "p.md").exists())
+        log = (self.layout.logs / "feat.log").read_text()
+        self.assertIn("timed out", log)
 
     def test_agent_produces_no_changes_fails(self):
         agent = "true"

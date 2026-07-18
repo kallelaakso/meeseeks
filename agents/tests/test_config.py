@@ -89,6 +89,22 @@ class TestConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_config(self._write(bad))
 
+    def test_agent_timeout_defaults_to_1800(self):
+        cfg = load_config(self._write(VALID))
+        self.assertEqual(cfg.agent_timeout_seconds, 1800)
+
+    def test_explicit_agent_timeout_is_honored(self):
+        cfg = load_config(self._write({**VALID, "agent_timeout_seconds": 60}))
+        self.assertEqual(cfg.agent_timeout_seconds, 60)
+
+    def test_zero_agent_timeout_allowed(self):
+        cfg = load_config(self._write({**VALID, "agent_timeout_seconds": 0}))
+        self.assertEqual(cfg.agent_timeout_seconds, 0)
+
+    def test_rejects_negative_agent_timeout(self):
+        with self.assertRaises(ValueError):
+            load_config(self._write({**VALID, "agent_timeout_seconds": -1}))
+
 
 if __name__ == "__main__":
     unittest.main()

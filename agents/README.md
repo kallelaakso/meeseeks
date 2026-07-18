@@ -42,6 +42,7 @@ Configure in `agents/config.json`:
 | `max_concurrency` | max parallel workers |
 | `poll_interval_seconds` | daemon poll cadence |
 | `merge_sweep_interval_seconds` | how often to check PR state for awaiting-merge plans (daemon only) |
+| `agent_timeout_seconds` | kill a hung agent after N seconds (`0`/unset = no timeout, default 1800) |
 | `integration_mode` | `auto-merge` or `pr` |
 | `base_branch` | branch agent work integrates into |
 | `verify_command` | run in the worktree before integrating; failure → `failed/` |
@@ -67,9 +68,13 @@ gitignored). The two example plans in `done/` are visible immediately.
   `base_branch` in the primary repo before merging. Run the daemon against a repo
   whose primary working tree is clean and dedicated to it — don't hand-edit there
   while it runs, or merges/checkouts will fail (the plan then lands in `failed/`).
-- **No crash recovery for `in-progress/`.** If a worker process is killed between
-  claiming and finishing, its plan is stranded in `in-progress/`. Recover
-  manually: inspect, then move it back to `ready-for-work/`.
+- **Stranded `in-progress/` plans are recovered at startup.** On daemon (or
+  `run_once`) start, any plan left in `in-progress/` is reclaimed: moved back to
+  `ready-for-work/`, unless its `plan/<id>` branch was already pushed or merged
+  (work landed) — those go to `failed/` for manual triage.
+- **Requeue a failed/closed plan** with `python3 agents/requeue.py <plan-id>`.
+  It moves the plan from `failed/` or `closed/` back to `ready-for-work/` and
+  appends a requeue marker to its log. `done/` plans are never requeueable.
 - **`failed/` and `closed/` keep the worktree + branch + `agents/logs/<id>.log`**
   for debugging. Clean up `.worktrees/<id>` yourself after inspecting.
 - **A dependency is satisfied only once its PR is merged.** `eligible_plans`
