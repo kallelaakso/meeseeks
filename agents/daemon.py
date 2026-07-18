@@ -11,6 +11,7 @@ from orchestrator.config import Config, load_config
 from orchestrator.layout import Layout
 from orchestrator.merge import sweep_pending_merges
 from orchestrator.plans import eligible_plans
+from orchestrator.recovery import recover_stranded
 from orchestrator.worker import OUTCOME, run_plan_as_process
 
 
@@ -45,6 +46,9 @@ def main() -> int:
     repo = Path(__file__).resolve().parents[1]
     layout = Layout.under(repo)
     config = load_config(repo / "agents" / "config.json")
+    recovered = recover_stranded(layout, config)
+    if recovered:
+        print(f"daemon: recovered stranded plans: {', '.join(recovered)}")
     running: dict[str, Process] = {}
     last_sweep = 0.0  # 0 forces a sweep on the first iteration
     print(f"daemon: polling {layout.ready} every {config.poll_interval_seconds}s "

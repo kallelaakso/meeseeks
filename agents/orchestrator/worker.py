@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -36,12 +38,24 @@ def _commit_worktree(wt: Path, plan_id: str, base_ref: str,
     return True
 
 
-def _run_agent(command: str, cwd: Path, log_path: Path) -> bool:
+def _run_agent(command: str, cwd: Path, log_path: Path,
+               timeout: int | None = None) -> bool:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     append_log(log_path, f"running agent in {cwd}: {command}")
     with log_path.open("a") as log:
-        proc = subprocess.run(command, cwd=str(cwd), shell=True,
-                              stdout=log, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(command, cwd=str(cwd), shell=True,
+                                stdout=log, stderr=subprocess.STDOUT, text=True,
+                                start_new_session=True)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+            append_log(log_path, f"agent timed out after {timeout}s — killed")
+            return False
     append_log(log_path, f"agent exited with code {proc.returncode}")
     return proc.returncode == 0
 
@@ -97,7 +111,8 @@ def run_plan(plan: Plan, layout: Layout, config: Config) -> str:
         verify_command=config.verify_command,
     )
 
-    agent_ok = _run_agent(command, wt, log_path)
+    agent_ok = _run_agent(command, wt, log_path,
+                          config.agent_timeout_seconds or None)
     if agent_ok:
         plan_copy.unlink(missing_ok=True)
         agent_ok = _commit_worktree(wt, plan.id, base_ref, log_path)

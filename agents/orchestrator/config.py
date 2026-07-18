@@ -16,6 +16,7 @@ class Config:
     verify_command: str
     agent_command: str
     merge_sweep_interval_seconds: int = 300
+    agent_timeout_seconds: int = 1800
     remote: str = "origin"
     dashboard_port: int = 8787
     dashboard_poll_interval_seconds: float = 3.0
@@ -47,6 +48,8 @@ def load_config(path: Path) -> Config:
         raise ValueError("poll_interval_seconds must be >= 1")
     if int(data.get("merge_sweep_interval_seconds", 300)) < 1:
         raise ValueError("merge_sweep_interval_seconds must be >= 1")
+    if int(data.get("agent_timeout_seconds", 1800)) < 0:
+        raise ValueError("agent_timeout_seconds must be >= 0")
     if int(data.get("dashboard_port", 8787)) < 1:
         raise ValueError("dashboard_port must be >= 1")
     if float(data.get("dashboard_poll_interval_seconds", 3.0)) < 0.1:
