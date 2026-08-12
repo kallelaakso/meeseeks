@@ -268,10 +268,25 @@ mutations; an API failure returns `[]` without raising.
      logins — this catches the whole class of "running as a human" that would
      silently break the review loop.
    - `projects.load_board(...)` with all seven column names required.
-3. `recover()`: for each claim in the local ledger with no live process, apply
-   the existing `recovery.py` logic — if the branch already pushed commits or
-   merged, `fail()` it for triage; otherwise release the claim. Only ever touch
-   claims recorded in **this machine's** ledger.
+3. `recover()`: for each claim in the local ledger with no live process, decide
+   whether the work escaped. Only ever touch claims recorded in **this
+   machine's** ledger.
+
+   The escaped test, in order:
+   - the remote ref exists with commits beyond the base sha → escaped;
+     `fail()` for triage, **or**
+   - the local branch has at least one commit over base
+     (`git rev-list --count <base>..<branch>` > 0) **and** those commits are an
+     ancestor of base → escaped; `fail()`
+   - otherwise → release the claim so the next poll re-claims it cleanly.
+
+   **Do not port `recovery.py:_branch_landed` as written.** It asks only
+   `merge-base --is-ancestor <branch> <base>`, which is trivially true for a
+   branch with **zero** commits — so an interruption *before* the orchestrator
+   commits is misreported as "work landed" and the ticket is dead-ended into
+   triage instead of retried. This bug was hit for real while implementing plan
+   1. The commit-count check above is the fix. Add a regression test: zero
+   commits over base must release, not fail.
 4. Loop every `poll_interval_seconds`:
    - gather evidence
    - `janitor.*` maintenance
