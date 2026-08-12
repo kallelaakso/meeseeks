@@ -13,24 +13,9 @@ VALID = {
     "project_number": 3,
     "bot_login": "acme-bot",
     "reviewer": "human",
-    "base_branch": "main",
     "spec_agent_command": "spec {prompt_file}",
     "impl_agent_command": "impl {prompt_file}",
     "verify_command": "true",
-    "columns": {
-        "backlog": "Backlog",
-        "spec_review": "Spec in review",
-        "ready": "Specs (ready for dev)",
-        "in_progress": "In progress",
-        "in_review": "In review",
-        "blocked": "Blocked",
-        "done": "Done",
-    },
-    "labels": {
-        "arm": "meeseeks:spec-me",
-        "failed": "meeseeks:failed",
-        "blocked": "meeseeks:blocked",
-    },
 }
 
 
@@ -59,19 +44,18 @@ class TestLoadConfig(unittest.TestCase):
             load_config(write({**VALID, "integration_mode": "pr"}))
         self.assertIn("integration_mode", str(cm.exception))
 
-    def test_rejects_missing_column(self):
-        columns = dict(VALID["columns"])
+    def test_defaults_fill_missing_column(self):
+        columns = {k: k for k in ("backlog", "spec_review", "ready",
+                                   "in_progress", "in_review", "blocked", "done")}
         del columns["blocked"]
-        with self.assertRaises(ValueError) as cm:
-            load_config(write({**VALID, "columns": columns}))
-        self.assertIn("blocked", str(cm.exception))
+        cfg = load_config(write({**VALID, "columns": columns}))
+        self.assertEqual(cfg.columns["blocked"], "Blocked")
 
-    def test_rejects_missing_label(self):
-        labels = dict(VALID["labels"])
+    def test_defaults_fill_missing_label(self):
+        labels = {"arm": "arm", "failed": "failed", "blocked": "blocked"}
         del labels["arm"]
-        with self.assertRaises(ValueError) as cm:
-            load_config(write({**VALID, "labels": labels}))
-        self.assertIn("arm", str(cm.exception))
+        cfg = load_config(write({**VALID, "labels": labels}))
+        self.assertEqual(cfg.labels["arm"], "meeseeks:spec-me")
 
     def test_rejects_fast_poll(self):
         with self.assertRaises(ValueError):
@@ -80,6 +64,27 @@ class TestLoadConfig(unittest.TestCase):
     def test_rejects_zero_concurrency(self):
         with self.assertRaises(ValueError):
             load_config(write({**VALID, "max_impl_concurrency": 0}))
+
+    def test_defaults_when_no_columns_or_labels(self):
+        cfg = load_config(write(VALID))
+        self.assertEqual(cfg.columns["done"], "Done")
+        self.assertEqual(cfg.labels["arm"], "meeseeks:spec-me")
+        self.assertEqual(cfg.base_branch, "main")
+
+    def test_partial_column_override(self):
+        cfg = load_config(write({**VALID, "columns": {"done": "Shipped"}}))
+        self.assertEqual(cfg.columns["done"], "Shipped")
+        self.assertEqual(cfg.columns["backlog"], "Backlog")
+
+    def test_rejects_unknown_column_key(self):
+        with self.assertRaises(ValueError) as cm:
+            load_config(write({**VALID, "columns": {"backlogg": "Oops"}}))
+        self.assertIn("backlogg", str(cm.exception))
+
+    def test_rejects_unknown_label_key(self):
+        with self.assertRaises(ValueError) as cm:
+            load_config(write({**VALID, "labels": {"armm": "Oops"}}))
+        self.assertIn("armm", str(cm.exception))
 
 
 class TestConfigHelpers(unittest.TestCase):
@@ -109,7 +114,7 @@ class TestConfigHelpers(unittest.TestCase):
 class TestRealConfig(unittest.TestCase):
     def test_shipped_config_is_valid(self):
         repo = Path(__file__).resolve().parents[2]
-        cfg = load_config(repo / "agents" / "config.json")
+        cfg = load_config(repo / ".meeseeks" / "config.json")
         self.assertIsInstance(cfg, Config)
 
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import daemon
 from orchestrator.config import Config
 from orchestrator.github import GitHub
+from orchestrator.paths import Paths
 
 
 def _config(**overrides) -> Config:
@@ -22,15 +25,30 @@ def _config(**overrides) -> Config:
     return Config(**base)
 
 
+def _paths() -> Paths:
+    root = Path(tempfile.mkdtemp())
+    (root / ".git").mkdir()
+    return Paths(root)
+
+
 class TestValidate(unittest.TestCase):
+    def test_refuses_to_start_without_git(self):
+        with tempfile.TemporaryDirectory() as td:
+            bad = Paths(Path(td))
+            def runner(args, input=None):
+                raise RuntimeError("gh should not be called")
+            with self.assertRaises(SystemExit) as cm:
+                daemon.validate(GitHub("o", "r", run=runner), _config(), bad)
+            self.assertIn(str(bad.root), str(cm.exception))
+
     def test_refuses_to_run_as_a_human(self):
         """Running under a human token silently kills the review loop, since
         GitHub forbids reviewing your own PR."""
         def runner(args, input=None):
-            return True, "kallelaakso\n"
+            return True, "human-user\n"
 
         with self.assertRaises(SystemExit) as cm:
-            daemon.validate(GitHub("o", "r", run=runner), _config())
+            daemon.validate(GitHub("o", "r", run=runner), _config(), _paths())
         self.assertIn("meeseeks-bot", str(cm.exception))
 
     def test_missing_column_is_fatal(self):
@@ -46,7 +64,7 @@ class TestValidate(unittest.TestCase):
             return True, "{}"
 
         with self.assertRaises(Exception) as cm:
-            daemon.validate(GitHub("o", "r", run=runner), _config())
+            daemon.validate(GitHub("o", "r", run=runner), _config(), _paths())
         self.assertIn("done", str(cm.exception))
 
     def test_accepts_a_correct_setup(self):
@@ -63,7 +81,7 @@ class TestValidate(unittest.TestCase):
                 ]})
             return True, json.dumps({"id": "P_1"})
 
-        board = daemon.validate(GitHub("o", "r", run=runner), _config())
+        board = daemon.validate(GitHub("o", "r", run=runner), _config(), _paths())
         self.assertEqual(board.project_id, "P_1")
 
 

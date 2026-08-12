@@ -13,34 +13,35 @@ import time
 from datetime import datetime, timezone
 from multiprocessing import Process
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from orchestrator import claiming, janitor, queues, tickets
 from orchestrator.config import Config, load_config
-from orchestrator.evidence import Evidence, gather
+from orchestrator.evidence import Evidence, gather, GitRunner
 from orchestrator.github import GitHub, GitHubError
 from orchestrator.job import run_job
+from orchestrator.paths import ConfigNotFound, Paths, find_root
 from orchestrator.projects import Board, load_board
 from orchestrator.reconcile import reconcile
 from orchestrator.recovery import recover
-
-REPO = Path(__file__).resolve().parents[1]
-LEDGER = REPO / "agents" / "state" / "claims.json"
-LOGS = REPO / "agents" / "logs"
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def git(args: list[str]) -> tuple[bool, str]:
-    proc = subprocess.run(["git", "-C", str(REPO), *args],
-                          capture_output=True, text=True)
-    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+def make_git(root: Path) -> GitRunner:
+    def git(args: list[str]) -> tuple[bool, str]:
+        proc = subprocess.run(["git", "-C", str(root), *args],
+                              capture_output=True, text=True)
+        return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+    return git
 
 
-def base_sha(cfg: Config) -> str:
+def base_sha(cfg: Config, git: GitRunner) -> str:
     git(["fetch", cfg.remote, cfg.base_branch])
     ok, out = git(["rev-parse", f"{cfg.remote}/{cfg.base_branch}"])
     if not ok:
@@ -48,13 +49,17 @@ def base_sha(cfg: Config) -> str:
     return out.strip()
 
 
-def validate(gh: GitHub, cfg: Config) -> Board:
+def validate(gh: GitHub, cfg: Config, paths: Paths) -> Board:
     """Refuse to start on a misconfigured setup.
 
     The bot-login check is the important one: running under a human token makes
     every PR unreviewable by that human, since GitHub forbids reviewing your
     own PR — the review loop would be silently dead.
     """
+    if not paths.is_git_repo:
+        raise SystemExit(
+            f"refusing to start: {paths.root} is not a git repository"
+        )
     login = gh.viewer_login()
     if login != cfg.bot_login:
         raise SystemExit(
@@ -80,13 +85,13 @@ def feedback_text(gh: GitHub, pr_number: int) -> str:
 
 
 def _work(kind: str, number: int, slug: str, title: str, body: str,
-          branch: str, cfg: Config, feedback: str) -> None:
+          branch: str, cfg: Config, paths: Paths, feedback: str) -> None:
     """Child-process entrypoint: run one job, report failure to the issue."""
     gh = GitHub(cfg.owner, cfg.repo)
-    log_path = LOGS / f"{number}.log"
+    log_path = paths.logs / f"{number}.log"
     try:
         outcome = run_job(kind, number, slug, title, body, branch, cfg, gh,
-                          REPO, log_path, feedback)
+                          paths.root, log_path, feedback)
     except Exception as exc:  # noqa: BLE001 — a crash must still be visible
         janitor.fail(gh, cfg, number, f"{kind} run crashed: {exc}",
                      branch, log_path)
@@ -98,10 +103,11 @@ def _work(kind: str, number: int, slug: str, title: str, body: str,
 
 
 def spawn(kind: str, number: int, slug: str, title: str, body: str,
-          branch: str, cfg: Config, feedback: str = "") -> Process:
+          branch: str, cfg: Config, paths: Paths,
+          feedback: str = "") -> Process:
     proc = Process(target=_work, name=f"{kind}-{number}",
                    args=(kind, number, slug, title, body, branch, cfg,
-                         feedback))
+                         paths, feedback))
     proc.start()
     print(f"daemon: started {kind} for #{number}")
     return proc
@@ -112,26 +118,27 @@ def _issue(ev: Evidence, number: int):
 
 
 def fill(kind: str, eligible: list[int], ev: Evidence, cfg: Config,
-         gh: GitHub, running: dict[int, Process]) -> None:
+         gh: GitHub, running: dict[int, Process], paths: Paths) -> None:
     """Claim and start work up to this kind's concurrency limit."""
     active = sum(1 for p in running.values() if p.name.startswith(kind))
+    git = make_git(paths.root)
     for number in eligible:
         if active >= cfg.concurrency(kind) or number in running:
             break
         issue = _issue(ev, number)
         slug = tickets.slugify(issue.title)
-        branch = claiming.claim(gh, LEDGER, kind, number, slug,
-                                base_sha(cfg), now())
+        branch = claiming.claim(gh, paths.ledger, kind, number, slug,
+                                base_sha(cfg, git), now())
         if branch is None:
             print(f"daemon: #{number} claimed elsewhere")
             continue
         running[number] = spawn(kind, number, slug, issue.title, issue.body,
-                                branch, cfg)
+                                branch, cfg, paths)
         active += 1
 
 
 def poll_once(gh: GitHub, board: Board, cfg: Config,
-              running: dict[int, Process]) -> None:
+              running: dict[int, Process], paths: Paths) -> None:
     for number in [n for n, p in running.items() if not p.is_alive()]:
         proc = running.pop(number)
         proc.join()
@@ -140,6 +147,7 @@ def poll_once(gh: GitHub, board: Board, cfg: Config,
     # Evidence includes "which spec files exist on base", read from the local
     # remote-tracking ref. Without a fetch first that ref is whatever it was at
     # startup, so every merge stays invisible until something else refreshes it.
+    git = make_git(paths.root)
     git(["fetch", cfg.remote, cfg.base_branch])
 
     ev = gather(gh, git, f"{cfg.remote}/{cfg.base_branch}",
@@ -150,12 +158,13 @@ def poll_once(gh: GitHub, board: Board, cfg: Config,
     disarmed = set(janitor.disarm(gh, cfg, ev))
     janitor.block_capped(gh, cfg, janitor.cap_exceeded(ev, cfg))
     janitor.publish_artifacts(gh, cfg, ev)
-    janitor.release_finished_claims(gh, cfg, ev, REPO, LEDGER)
+    janitor.release_finished_claims(gh, cfg, ev, paths.root, paths.ledger)
 
     for pr in janitor.conflicting(ev):
-        worktree = REPO / ".worktrees" / pr.branch.split("/", 2)[-1]
+        worktree = paths.worktrees / pr.branch.split("/", 2)[-1]
         if worktree.exists():
-            janitor.rebase(REPO, worktree, cfg, LOGS / f"{pr.issue}.log")
+            janitor.rebase(paths.root, worktree, cfg,
+                           paths.logs / f"{pr.issue}.log")
 
     for pr in janitor.revision_tasks(ev, cfg):
         if pr.issue in running:
@@ -165,34 +174,41 @@ def poll_once(gh: GitHub, board: Board, cfg: Config,
             continue
         running[pr.issue] = spawn(
             pr.kind, pr.issue, tickets.slugify(issue.title), issue.title,
-            issue.body, pr.branch, cfg, feedback_text(gh, pr.number),
+            issue.body, pr.branch, cfg, paths, feedback_text(gh, pr.number),
         )
 
     armed = [n for n in queues.spec_queue(ev, cfg.labels)
              if n not in disarmed]
-    fill("spec", armed, ev, cfg, gh, running)
-    fill("impl", queues.impl_queue(ev, cfg.labels), ev, cfg, gh, running)
+    fill("spec", armed, ev, cfg, gh, running, paths)
+    fill("impl", queues.impl_queue(ev, cfg.labels), ev, cfg, gh, running, paths)
 
     for number, was, want in reconcile(gh, board, ev, cfg, cfg.project_number):
         print(f"daemon: board #{number} {was} -> {want}")
 
 
 def main() -> int:
-    cfg = load_config(REPO / "agents" / "config.json")
+    try:
+        paths = Paths(find_root())
+    except ConfigNotFound as exc:
+        print(f"daemon: {exc}")
+        return 2
+    cfg = load_config(paths.config)
     gh = GitHub(cfg.owner, cfg.repo)
-    board = validate(gh, cfg)
+    board = validate(gh, cfg, paths)
 
-    for number, outcome in recover(gh, cfg, REPO, LEDGER, LOGS).items():
+    for number, outcome in recover(gh, cfg, paths.root, paths.ledger,
+                                   paths.logs).items():
         print(f"daemon: recovered #{number} -> {outcome}")
 
     running: dict[int, Process] = {}
+    print(f"daemon: project root {paths.root}")
     print(f"daemon: polling {cfg.owner}/{cfg.repo} every "
           f"{cfg.poll_interval_seconds}s "
           f"(spec={cfg.max_spec_concurrency}, impl={cfg.max_impl_concurrency})")
     try:
         while True:
             try:
-                poll_once(gh, board, cfg, running)
+                poll_once(gh, board, cfg, running, paths)
             except GitHubError as exc:
                 print(f"daemon: github error, backing off: {exc}")
             time.sleep(cfg.poll_interval_seconds)
