@@ -19,22 +19,25 @@ def _fake_runner(responses: list[tuple[bool, str]]):
 
 class TestProjects(unittest.TestCase):
     def test_load_board_maps_options(self):
-        runner, calls = _fake_runner([(
-            True,
-            json.dumps({
-                "id": "P_1",
-                "fields": [
-                    {
-                        "name": "Status",
-                        "id": "F_1",
-                        "options": [
-                            {"name": "Todo", "id": "O_1"},
-                            {"name": "Done", "id": "O_2"},
-                        ],
-                    }
-                ],
-            }),
-        )])
+        runner, calls = _fake_runner([
+            (
+                True,
+                json.dumps({
+                    "fields": [
+                        {
+                            "name": "Status",
+                            "id": "F_1",
+                            "options": [
+                                {"name": "Todo", "id": "O_1"},
+                                {"name": "Done", "id": "O_2"},
+                            ],
+                        }
+                    ],
+                }),
+            ),
+            # field-list carries no project id; it comes from `project view`.
+            (True, json.dumps({"id": "P_1", "number": 1})),
+        ])
         gh = GitHub("acme", "repo", run=runner)
         board = load_board(gh, 1, "Status", ["Todo", "Done"])
         self.assertEqual(board.project_id, "P_1")

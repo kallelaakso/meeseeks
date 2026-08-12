@@ -3,10 +3,14 @@ from __future__ import annotations
 from orchestrator.evidence import Evidence
 
 
+DEFAULT_BLOCKING_LABELS = ("meeseeks:failed", "meeseeks:blocked")
+
+
 def desired_column(
     number: int,
     ev: Evidence,
     columns: dict[str, str],
+    blocking_labels: tuple[str, ...] = DEFAULT_BLOCKING_LABELS,
 ) -> str:
     issue = ev.issues.get(number)
     labels = issue.labels if issue else frozenset()
@@ -20,7 +24,7 @@ def desired_column(
         return columns["done"]
 
     # 2. failed / blocked label -> blocked
-    if "meeseeks:failed" in labels or "meeseeks:blocked" in labels:
+    if any(label in labels for label in blocking_labels):
         return columns["blocked"]
 
     # 3. open impl PR with unaddressed changes -> in_progress

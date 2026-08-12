@@ -50,6 +50,19 @@ class GitHub:
             "--json", "number,title,body,labels,state",
         ], "issues_with_label failed: ")
 
+    def all_issues(self, limit: int = 200) -> list[dict]:
+        """Every issue, open and closed.
+
+        The projection needs closed issues too (a closed ticket renders Done),
+        so label-scoped listing is not enough. One call covers the whole board.
+        """
+        return self._json([
+            "gh", "issue", "list",
+            "--state", "all",
+            "--limit", str(limit),
+            "--json", "number,title,body,labels,state",
+        ], "all_issues failed: ")
+
     def issue(self, number: int) -> dict:
         return self._json([
             "gh", "issue", "view", str(number),
