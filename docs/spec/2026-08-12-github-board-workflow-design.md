@@ -445,14 +445,40 @@ depending on someone remembering to check a board.
   would build it does not exist yet). It goes through the current file-based
   flow one last time, as the final act of the old system.
 
-## Unresolved questions
+### Rollout: parallel install, then swap
 
-1. Repo currently has no `Blocked`/`Spec in review` columns — you add them
-   manually, or the daemon creates missing Status options at startup?
-2. Branch protection on `main` requiring 1 approving review — turn on as part of
-   this, or leave your rules alone?
-3. `meeseeks release <n>` (steal another machine's stale claim) — build in v1,
-   or defer until it actually hurts?
-4. Delete `.worktrees/<n>-<slug>` on successful merge, or keep until re-arm?
-5. One implementation plan, or split (evidence+projection / claim+worker /
-   deletion+migration)?
+The old daemon is what executes the three implementation plans, so it must keep
+running until the last one merges. The new system is therefore built
+**alongside** it, under distinct names, and only replaces it at the end:
+
+| Plan | Effect on the old system |
+|---|---|
+| 1 — foundation | None. Purely additive modules, nothing wired. |
+| 2 — daemon | None. New entrypoint `agents/board_daemon.py` + `agents/board.json`; old `daemon.py` / `config.json` untouched and still runnable. |
+| 3 — cleanup | Deletes the old system and renames `board_*` to canonical names. |
+
+Plan 3 deletes modules while the old daemon is running them. That is safe —
+Python has already imported them — but the old daemon must **not be restarted**
+after plan 3's agent runs. The human merges plan 3's PR, then decommissions the
+old daemon and starts the new one.
+
+Two steps stay **manual**, deliberately, because an agent doing them mid-flight
+would break the machinery executing it:
+
+- Moving the old `docs/plan/` state dirs into `docs/plan/archive/` — the running
+  daemon still needs `ready-for-work/`, `in-progress/`, and `done/`.
+- Adding the two board columns and creating the bot account.
+
+## Resolved during review
+
+1. **Columns** — added manually by the human. The daemon validates their
+   presence at startup and refuses to run if any are missing; it never creates
+   them.
+2. **Branch protection** — out of scope. Recommended once the bot account
+   exists, but not part of this work.
+3. **`meeseeks release <n>`** — built in plan 2. It is ~30 lines (delete ref,
+   drop the local ledger entry) and it is the only escape hatch for a claim
+   stranded by a machine that never returns.
+4. **Worktrees** — deleted when the impl PR merges, along with the local claim
+   record. Kept on failure, since that is the only copy of the failed attempt.
+5. **Split** — three plans, sequenced as above.
