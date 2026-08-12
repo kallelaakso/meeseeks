@@ -9,9 +9,15 @@ Runner = Callable[[list[str], Optional[str]], tuple[bool, str]]
 
 
 def default_runner(args: list[str], input: Optional[str] = None) -> tuple[bool, str]:
+    """Run a command, folding stderr into stdout.
+
+    `capture_output` cannot be combined with an explicit `stderr`, so the pipes
+    are wired by hand. Error text must reach the caller: `create_ref` decides a
+    lost race from GitHub's "already exists" message, which arrives on stderr.
+    """
     proc = subprocess.run(
-        args, capture_output=True, text=True,
-        stderr=subprocess.STDOUT, input=input,
+        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, input=input,
     )
     return proc.returncode == 0, proc.stdout
 
@@ -50,6 +56,19 @@ class GitHub:
             "--json", "number,title,body,labels,state",
         ], "issues_with_label failed: ")
 
+    def all_issues(self, limit: int = 200) -> list[dict]:
+        """Every issue, open and closed.
+
+        The projection needs closed issues too (a closed ticket renders Done),
+        so label-scoped listing is not enough. One call covers the whole board.
+        """
+        return self._json([
+            "gh", "issue", "list",
+            "--state", "all",
+            "--limit", str(limit),
+            "--json", "number,title,body,labels,state",
+        ], "all_issues failed: ")
+
     def issue(self, number: int) -> dict:
         return self._json([
             "gh", "issue", "view", str(number),
@@ -62,6 +81,17 @@ class GitHub:
             "--state", "open",
             "--json", "number,headRefName,headRefOid,title,mergeable,url",
         ], "open_prs failed: ")
+
+    def open_pr_for(self, branch: str) -> dict | None:
+        """The open PR for a branch, if any. Used to stay idempotent when a
+        crash lands between pushing and opening the PR."""
+        prs = self._json([
+            "gh", "pr", "list",
+            "--head", branch,
+            "--state", "open",
+            "--json", "number,url",
+        ], f"open_pr_for {branch} failed: ")
+        return prs[0] if prs else None
 
     def merged_pr_branches(self) -> list[dict]:
         return self._json([

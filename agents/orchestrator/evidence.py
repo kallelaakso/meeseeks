@@ -27,6 +27,7 @@ class PullEv:
     mergeable: str | None
     head_committed_at: str | None
     last_change_request_at: str | None
+    change_requests: int = 0
 
     @property
     def has_unaddressed_changes(self) -> bool:
@@ -72,20 +73,27 @@ def _parse_specs_landed(stdout: str) -> set[int]:
     return result
 
 
-def _make_pull_ev(pr: dict) -> PullEv | None:
+def _last_change_request(reviews: list[dict]) -> str | None:
+    dates = [r["submittedAt"] for r in reviews
+             if r.get("state") == "CHANGES_REQUESTED" and r.get("submittedAt")]
+    return max(dates) if dates else None
+
+
+def _make_pull_ev(pr: dict, reviews: list[dict] | None = None) -> PullEv | None:
     branch = pr.get("headRefName", "")
     parsed = parse_branch(branch)
     if parsed is None:
         return None
     kind, issue = parsed
-    reviews = pr.get("reviews", [])
-    dates = [r["submittedAt"] for r in reviews
-             if r.get("state") == "CHANGES_REQUESTED" and r.get("submittedAt")]
+    if reviews is None:
+        reviews = pr.get("reviews", [])
     return PullEv(
         number=pr["number"], kind=kind, issue=issue, branch=branch,
         head_sha=pr.get("headRefOid", ""), mergeable=pr.get("mergeable"),
         head_committed_at=None,
-        last_change_request_at=max(dates) if dates else None,
+        last_change_request_at=_last_change_request(reviews),
+        change_requests=sum(1 for r in reviews
+                            if r.get("state") == "CHANGES_REQUESTED"),
     )
 
 
@@ -93,8 +101,14 @@ def gather(
     gh: GitHub,
     git_runner: GitRunner,
     base_ref: str,
-    labels: list[str],
+    labels: list[str] | None = None,
 ) -> Evidence:
+    """Snapshot every piece of evidence the projection needs.
+
+    `labels` is unused and kept for call compatibility: issues are gathered in
+    one unscoped call, because the projection must see closed and unlabelled
+    issues too.
+    """
     ok, refs_out = git_runner([
         "git", "ls-remote", "--heads", "origin", "meeseeks/*",
     ])
@@ -106,21 +120,22 @@ def gather(
     specs_landed = _parse_specs_landed(tree_out if ok else "")
 
     issues: dict[int, IssueEv] = {}
-    for label in labels:
-        for raw in gh.issues_with_label(label):
-            n = raw["number"]
-            if n in issues:
-                continue
-            issues[n] = IssueEv(
-                number=n, title=raw.get("title", ""),
-                body=raw.get("body", ""),
-                labels=frozenset(l["name"] for l in raw.get("labels", [])),
-                closed=raw.get("state") != "OPEN",
-            )
+    for raw in gh.all_issues():
+        n = raw["number"]
+        issues[n] = IssueEv(
+            number=n, title=raw.get("title", ""),
+            body=raw.get("body", ""),
+            labels=frozenset(l["name"] for l in raw.get("labels", [])),
+            closed=raw.get("state") != "OPEN",
+        )
 
     open_prs: dict[int, list[PullEv]] = {}
     for pr in gh.open_prs():
-        ev = _make_pull_ev(pr)
+        if parse_branch(pr.get("headRefName", "")) is None:
+            continue
+        # Reviews are not available from `pr list`, so they need their own
+        # call per meeseeks PR — without them the revision trigger is dead.
+        ev = _make_pull_ev(pr, gh.pr_reviews(pr["number"]))
         if ev is None:
             continue
         open_prs.setdefault(ev.issue, []).append(

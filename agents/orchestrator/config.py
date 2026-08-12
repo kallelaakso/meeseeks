@@ -4,24 +4,53 @@ import json
 from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
 
-VALID_MODES = {"auto-merge", "pr"}
+COLUMN_KEYS = {"backlog", "spec_review", "ready", "in_progress",
+               "in_review", "blocked", "done"}
+LABEL_KEYS = {"arm", "failed", "blocked"}
 
 
 @dataclass(frozen=True)
 class Config:
-    max_concurrency: int
-    poll_interval_seconds: int
-    integration_mode: str
+    owner: str
+    repo: str
+    project_number: int
+    bot_login: str
+    reviewer: str
     base_branch: str
+    spec_agent_command: str
+    impl_agent_command: str
     verify_command: str
-    agent_command: str
-    merge_sweep_interval_seconds: int = 300
-    agent_timeout_seconds: int = 1800
+    columns: dict[str, str]
+    labels: dict[str, str]
     remote: str = "origin"
-    dashboard_port: int = 8787
-    dashboard_poll_interval_seconds: float = 3.0
-    dashboard_pr_sweep_interval_seconds: float = 60.0
-    dashboard_db: str = "agents/dashboard.db"
+    status_field: str = "Status"
+    poll_interval_seconds: int = 30
+    max_spec_concurrency: int = 1
+    max_impl_concurrency: int = 3
+    max_revision_attempts: int = 3
+
+    @property
+    def required_options(self) -> list[str]:
+        """Column names that must exist on the board, in flow order."""
+        return [self.columns[k] for k in
+                ("backlog", "spec_review", "ready", "in_progress",
+                 "in_review", "blocked", "done")]
+
+    @property
+    def blocking_labels(self) -> tuple[str, ...]:
+        return (self.labels["failed"], self.labels["blocked"])
+
+    @property
+    def repo_url(self) -> str:
+        return f"https://github.com/{self.owner}/{self.repo}"
+
+    def agent_command(self, kind: str) -> str:
+        return (self.spec_agent_command if kind == "spec"
+                else self.impl_agent_command)
+
+    def concurrency(self, kind: str) -> int:
+        return (self.max_spec_concurrency if kind == "spec"
+                else self.max_impl_concurrency)
 
 
 def load_config(path: Path) -> Config:
@@ -37,24 +66,18 @@ def load_config(path: Path) -> Config:
     if extra:
         raise ValueError(f"config has unknown keys: {sorted(extra)}")
 
-    if data["integration_mode"] not in VALID_MODES:
-        raise ValueError(
-            f"integration_mode must be one of {sorted(VALID_MODES)}, "
-            f"got {data['integration_mode']!r}"
-        )
-    if int(data["max_concurrency"]) < 1:
-        raise ValueError("max_concurrency must be >= 1")
-    if int(data["poll_interval_seconds"]) < 1:
-        raise ValueError("poll_interval_seconds must be >= 1")
-    if int(data.get("merge_sweep_interval_seconds", 300)) < 1:
-        raise ValueError("merge_sweep_interval_seconds must be >= 1")
-    if int(data.get("agent_timeout_seconds", 1800)) < 0:
-        raise ValueError("agent_timeout_seconds must be >= 0")
-    if int(data.get("dashboard_port", 8787)) < 1:
-        raise ValueError("dashboard_port must be >= 1")
-    if float(data.get("dashboard_poll_interval_seconds", 3.0)) < 0.1:
-        raise ValueError("dashboard_poll_interval_seconds must be >= 0.1")
-    if float(data.get("dashboard_pr_sweep_interval_seconds", 60.0)) < 1:
-        raise ValueError("dashboard_pr_sweep_interval_seconds must be >= 1")
+    missing_columns = COLUMN_KEYS - data["columns"].keys()
+    if missing_columns:
+        raise ValueError(f"config columns missing: {sorted(missing_columns)}")
+    missing_labels = LABEL_KEYS - data["labels"].keys()
+    if missing_labels:
+        raise ValueError(f"config labels missing: {sorted(missing_labels)}")
+
+    if int(data.get("poll_interval_seconds", 30)) < 5:
+        raise ValueError("poll_interval_seconds must be >= 5")
+    for key in ("max_spec_concurrency", "max_impl_concurrency",
+                "max_revision_attempts"):
+        if int(data.get(key, 1)) < 1:
+            raise ValueError(f"{key} must be >= 1")
 
     return Config(**data)

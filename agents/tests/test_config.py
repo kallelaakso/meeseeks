@@ -8,102 +8,109 @@ from pathlib import Path
 from orchestrator.config import Config, load_config
 
 VALID = {
-    "max_concurrency": 2,
-    "poll_interval_seconds": 5,
-    "integration_mode": "auto-merge",
+    "owner": "acme",
+    "repo": "widgets",
+    "project_number": 3,
+    "bot_login": "acme-bot",
+    "reviewer": "human",
     "base_branch": "main",
+    "spec_agent_command": "spec {prompt_file}",
+    "impl_agent_command": "impl {prompt_file}",
     "verify_command": "true",
-    "agent_command": "echo {plan_path}",
+    "columns": {
+        "backlog": "Backlog",
+        "spec_review": "Spec in review",
+        "ready": "Specs (ready for dev)",
+        "in_progress": "In progress",
+        "in_review": "In review",
+        "blocked": "Blocked",
+        "done": "Done",
+    },
+    "labels": {
+        "arm": "meeseeks:spec-me",
+        "failed": "meeseeks:failed",
+        "blocked": "meeseeks:blocked",
+    },
 }
 
 
-class TestConfig(unittest.TestCase):
-    def _write(self, data: dict) -> Path:
-        d = Path(tempfile.mkdtemp())
-        p = d / "config.json"
-        p.write_text(json.dumps(data))
-        return p
+def write(data: dict) -> Path:
+    path = Path(tempfile.mkdtemp()) / "config.json"
+    path.write_text(json.dumps(data))
+    return path
 
-    def test_loads_valid_config(self):
-        cfg = load_config(self._write(VALID))
-        self.assertEqual(cfg.max_concurrency, 2)
-        self.assertEqual(cfg.integration_mode, "auto-merge")
 
-    def test_rejects_unknown_integration_mode(self):
-        bad = {**VALID, "integration_mode": "yolo"}
-        with self.assertRaises(ValueError):
-            load_config(self._write(bad))
+class TestLoadConfig(unittest.TestCase):
+    def test_loads_valid(self):
+        cfg = load_config(write(VALID))
+        self.assertEqual(cfg.owner, "acme")
+        self.assertEqual(cfg.poll_interval_seconds, 30)
+        self.assertEqual(cfg.status_field, "Status")
 
     def test_rejects_missing_key(self):
-        bad = {k: v for k, v in VALID.items() if k != "base_branch"}
+        data = dict(VALID)
+        del data["owner"]
+        with self.assertRaises(ValueError) as cm:
+            load_config(write(data))
+        self.assertIn("owner", str(cm.exception))
+
+    def test_rejects_unknown_key(self):
+        with self.assertRaises(ValueError) as cm:
+            load_config(write({**VALID, "integration_mode": "pr"}))
+        self.assertIn("integration_mode", str(cm.exception))
+
+    def test_rejects_missing_column(self):
+        columns = dict(VALID["columns"])
+        del columns["blocked"]
+        with self.assertRaises(ValueError) as cm:
+            load_config(write({**VALID, "columns": columns}))
+        self.assertIn("blocked", str(cm.exception))
+
+    def test_rejects_missing_label(self):
+        labels = dict(VALID["labels"])
+        del labels["arm"]
+        with self.assertRaises(ValueError) as cm:
+            load_config(write({**VALID, "labels": labels}))
+        self.assertIn("arm", str(cm.exception))
+
+    def test_rejects_fast_poll(self):
         with self.assertRaises(ValueError):
-            load_config(self._write(bad))
+            load_config(write({**VALID, "poll_interval_seconds": 1}))
 
-    def test_rejects_non_positive_concurrency(self):
-        bad = {**VALID, "max_concurrency": 0}
+    def test_rejects_zero_concurrency(self):
         with self.assertRaises(ValueError):
-            load_config(self._write(bad))
+            load_config(write({**VALID, "max_impl_concurrency": 0}))
 
-    def test_optional_merge_sweep_interval_defaults_to_300(self):
-        cfg = load_config(self._write(VALID))
-        self.assertEqual(cfg.merge_sweep_interval_seconds, 300)
 
-    def test_explicit_merge_sweep_interval_is_honored(self):
-        data = {**VALID, "merge_sweep_interval_seconds": 60}
-        cfg = load_config(self._write(data))
-        self.assertEqual(cfg.merge_sweep_interval_seconds, 60)
+class TestConfigHelpers(unittest.TestCase):
+    def setUp(self):
+        self.cfg = load_config(write(VALID))
 
-    def test_rejects_non_positive_merge_sweep_interval(self):
-        bad = {**VALID, "merge_sweep_interval_seconds": 0}
-        with self.assertRaises(ValueError):
-            load_config(self._write(bad))
+    def test_required_options_in_flow_order(self):
+        self.assertEqual(self.cfg.required_options[0], "Backlog")
+        self.assertEqual(self.cfg.required_options[-1], "Done")
+        self.assertEqual(len(self.cfg.required_options), 7)
 
-    def test_dashboard_defaults(self):
-        cfg = load_config(self._write(VALID))
-        self.assertEqual(cfg.dashboard_port, 8787)
-        self.assertEqual(cfg.dashboard_poll_interval_seconds, 3.0)
-        self.assertEqual(cfg.dashboard_pr_sweep_interval_seconds, 60.0)
-        self.assertEqual(cfg.dashboard_db, "agents/dashboard.db")
+    def test_blocking_labels(self):
+        self.assertEqual(self.cfg.blocking_labels,
+                         ("meeseeks:failed", "meeseeks:blocked"))
 
-    def test_dashboard_overrides(self):
-        data = {
-            **VALID,
-            "dashboard_port": 8080,
-            "dashboard_poll_interval_seconds": 5.0,
-            "dashboard_pr_sweep_interval_seconds": 120.0,
-            "dashboard_db": "agents/other.db",
-        }
-        cfg = load_config(self._write(data))
-        self.assertEqual(cfg.dashboard_port, 8080)
-        self.assertEqual(cfg.dashboard_poll_interval_seconds, 5.0)
-        self.assertEqual(cfg.dashboard_pr_sweep_interval_seconds, 120.0)
-        self.assertEqual(cfg.dashboard_db, "agents/other.db")
+    def test_agent_command_and_concurrency_by_kind(self):
+        self.assertTrue(self.cfg.agent_command("spec").startswith("spec"))
+        self.assertTrue(self.cfg.agent_command("impl").startswith("impl"))
+        self.assertEqual(self.cfg.concurrency("spec"), 1)
+        self.assertEqual(self.cfg.concurrency("impl"), 3)
 
-    def test_rejects_non_positive_dashboard_port(self):
-        bad = {**VALID, "dashboard_port": 0}
-        with self.assertRaises(ValueError):
-            load_config(self._write(bad))
+    def test_repo_url(self):
+        self.assertEqual(self.cfg.repo_url,
+                         "https://github.com/acme/widgets")
 
-    def test_rejects_too_small_dashboard_poll_interval(self):
-        bad = {**VALID, "dashboard_poll_interval_seconds": 0.05}
-        with self.assertRaises(ValueError):
-            load_config(self._write(bad))
 
-    def test_agent_timeout_defaults_to_1800(self):
-        cfg = load_config(self._write(VALID))
-        self.assertEqual(cfg.agent_timeout_seconds, 1800)
-
-    def test_explicit_agent_timeout_is_honored(self):
-        cfg = load_config(self._write({**VALID, "agent_timeout_seconds": 60}))
-        self.assertEqual(cfg.agent_timeout_seconds, 60)
-
-    def test_zero_agent_timeout_allowed(self):
-        cfg = load_config(self._write({**VALID, "agent_timeout_seconds": 0}))
-        self.assertEqual(cfg.agent_timeout_seconds, 0)
-
-    def test_rejects_negative_agent_timeout(self):
-        with self.assertRaises(ValueError):
-            load_config(self._write({**VALID, "agent_timeout_seconds": -1}))
+class TestRealConfig(unittest.TestCase):
+    def test_shipped_config_is_valid(self):
+        repo = Path(__file__).resolve().parents[2]
+        cfg = load_config(repo / "agents" / "config.json")
+        self.assertIsInstance(cfg, Config)
 
 
 if __name__ == "__main__":

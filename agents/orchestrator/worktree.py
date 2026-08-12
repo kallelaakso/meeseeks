@@ -76,5 +76,23 @@ def create_worktree(repo: Path, worktrees_dir: Path, slug: str,
     return wt, branch
 
 
+def create_worktree_on(repo: Path, worktrees_dir: Path, name: str,
+                       branch: str, remote: str = "origin") -> Path:
+    """Check out an existing remote branch into a fresh worktree.
+
+    The claim already created the branch on the remote, so this fetches it
+    rather than creating one. Idempotent: any leftover worktree or local branch
+    of the same name is discarded first, so a retry after a crash is clean.
+    """
+    wt = Path(worktrees_dir) / name
+    if wt.exists():
+        _git_quiet(repo, "worktree", "remove", "--force", str(wt))
+    _git_quiet(repo, "worktree", "prune")
+    _git_quiet(repo, "branch", "-D", branch)
+    _git(repo, "fetch", remote, branch)
+    _git(repo, "worktree", "add", "-b", branch, str(wt), "FETCH_HEAD")
+    return wt
+
+
 def remove_worktree(repo: Path, worktree: Path) -> None:
     _git(repo, "worktree", "remove", "--force", str(worktree))

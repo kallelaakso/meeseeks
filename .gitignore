@@ -1,8 +1,8 @@
 .worktrees/
 agents/logs/
-agents/dashboard.db
-agents/dashboard.db-*
+agents/state/
 __pycache__/
 *.pyc
 .DS_Store
 .idea/
+.

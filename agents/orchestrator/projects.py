@@ -1,8 +1,45 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from orchestrator.github import GitHub, GitHubError
+
+
+def explain(output: str) -> str:
+    """Turn gh's opaque project errors into something actionable.
+
+    `gh project` classifies an owner with one query covering both `user` and
+    `organization`. The organization half needs `read:org`, and GitHub rejects
+    the whole query without it — leaving gh unable to tell what the owner is,
+    which it reports as "unknown owner type".
+    """
+    if "unknown owner type" in output:
+        return (
+            f"{output.strip()}\n"
+            "  → the token is missing the 'read:org' scope. gh needs it to "
+            "classify the project owner, even for a user-owned board.\n"
+            "  → required scopes: repo, project, read:org"
+        )
+    if "INSUFFICIENT_SCOPES" in output or "not been granted" in output:
+        return f"{output.strip()}\n  → check the token's scopes"
+    return output
+
+
+def project_id(gh: GitHub, project_number: int) -> str:
+    """The project's node id, needed for item-edit.
+
+    `field-list` does not carry it — its only top-level keys are `fields` and
+    `totalCount` — so it has to come from `project view`.
+    """
+    ok, out = gh.run([
+        "gh", "project", "view", str(project_number),
+        "--owner", gh.owner,
+        "--format", "json",
+    ])
+    if not ok:
+        raise GitHubError(f"project view failed: {explain(out)}")
+    return json.loads(out)["id"]
 
 
 @dataclass(frozen=True)
@@ -24,8 +61,7 @@ def load_board(
         "--format", "json",
     ])
     if not ok:
-        raise GitHubError(f"field-list failed: {out}")
-    import json
+        raise GitHubError(f"field-list failed: {explain(out)}")
     data = json.loads(out)
     fields = {f["name"]: f for f in data.get("fields", [])}
     field = fields.get(status_field)
@@ -38,7 +74,7 @@ def load_board(
             f"missing board options: {', '.join(missing)}"
         )
     return Board(
-        project_id=data["id"],
+        project_id=project_id(gh, project_number),
         status_field_id=field["id"],
         option_ids=options,
     )
@@ -54,8 +90,7 @@ def item_status(
         "--format", "json",
     ])
     if not ok:
-        raise GitHubError(f"item-list failed: {out}")
-    import json
+        raise GitHubError(f"item-list failed: {explain(out)}")
     data = json.loads(out)
     result: dict[int, tuple[str, str]] = {}
     for item in data.get("items", []):
@@ -63,8 +98,11 @@ def item_status(
         number = content.get("number")
         if number is None:
             continue
-        status = item.get("status", {})
-        result[number] = (item["id"], status.get("name", ""))
+        # gh renders a single-select value as a bare string; older/other
+        # shapes use {"name": ...}. Accept both rather than guess.
+        status = item.get("status") or ""
+        name = status.get("name", "") if isinstance(status, dict) else status
+        result[number] = (item["id"], name)
     return result
 
 

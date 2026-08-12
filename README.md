@@ -1,92 +1,122 @@
 # Meeseeks – Agentic development environment
 
-A reusable, spec-driven setup for shipping features with AI agents. Two tiers:
+A spec-driven setup for shipping features with AI agents, driven by GitHub
+issues and a project board.
 
-- **Planner** — Claude (Opus). Writes specs and plans. Never writes
-  implementation code.
-- **Implementers** — cheap coding agents (OpenCode / Kimi). Pick up approved
-  plans and implement them in isolated git worktrees.
+- **Planner** — Claude (Opus), interactive. Brainstorms with you and writes the
+  ticket. Never writes specs, plans, or code.
+- **Spec agent** — writes the design spec and implementation plan from the
+  ticket, opens a `[spec]` PR.
+- **Impl agent** — a cheap coding agent (OpenCode / Kimi) that implements the
+  merged plan in an isolated worktree and opens a PR.
 
-A Python daemon (`agents/`) orchestrates the implementers: claim → run →
-verify → integrate.
+A Python daemon (`agents/`) runs both, claims work atomically, and keeps the
+board in sync.
 
-**NOTE:** This is experimental project for my private use. Please don't expect it to be stable.
+**NOTE:** This is an experimental project for my private use. Please don't
+expect it to be stable.
 
 ## Prerequisites
 
-- Python 3.7+
-- Git & Github CLI (`gh`)
-- Claude Code subscription
-- Open Code subscription
+- Python 3.9+
+- Git & GitHub CLI (`gh`)
+- Claude Code subscription (spec agent), OpenCode subscription (impl agent)
+- A GitHub project board and a machine user (see Setup)
 
 ## The workflow
 
 ```
-request → spec → plan (draft) → ready-for-work → [daemon] → done / failed
-          Opus   Opus            you approve       agents
+issue → [meeseeks:spec-me] → [spec] PR → you merge
+      → impl PR → you merge → done
 ```
 
-1. **Spec** — Opus writes a design doc to `docs/spec/`. You review.
-2. **Plan** — on approval, Opus writes an implementation plan to
-   `docs/plan/drafts/` (the `write-agent-plan` skill enforces the required
-   frontmatter). You approve.
-3. **Hand off** — the plan moves to `docs/plan/ready-for-work/`.
-4. **Implement** — the daemon claims it, runs an agent in a worktree, runs the
-   verify command, integrates, and moves the plan to `done/` (or `failed/`).
+1. **Ticket** — you and Claude write an issue. Adding the `meeseeks:spec-me`
+   label arms it.
+2. **Spec** — the daemon writes `docs/spec/<n>-<slug>.md` and
+   `docs/plan/<n>-<slug>.md` and opens a `[spec]` PR for review. Request
+   changes and the agent revises; merge and implementation is armed.
+3. **Implement** — the daemon claims it, runs the agent in a worktree, runs the
+   verify command, and opens a PR that closes the issue.
+4. **Done** — you merge.
 
-Plan state **is** the directory the file lives in — nothing else tracks it.
+Nothing tracks state separately: it is derived from labels, PRs, git refs, and
+which spec files exist on the base branch.
+
+## The board is a projection
+
+The daemon **writes** the Status field and never reads it for decisions:
+
+| Evidence | Column |
+|---|---|
+| issue closed, or impl PR merged | Done |
+| `meeseeks:failed` / `meeseeks:blocked` label | Blocked |
+| impl PR open with unaddressed change request | In progress |
+| impl PR open | In review |
+| impl claim ref exists | In progress |
+| `docs/spec/<n>-*.md` on the base branch | Specs (ready for dev) |
+| spec PR open | Spec in review |
+| otherwise | Backlog |
+
+Dragging a card does nothing — the next poll puts it back. Control the workflow
+with labels, reviews, and merges.
+
+## Setup
+
+1. **Board** — create a project with a `Status` field carrying exactly these
+   options: `Backlog`, `Spec in review`, `Specs (ready for dev)`,
+   `In progress`, `In review`, `Blocked`, `Done`. The daemon refuses to start
+   if any are missing and never creates them itself.
+2. **Built-in workflows** — keep *auto-add to project* on; turn **off** every
+   status-changing workflow and auto-archive, so meeseeks is the only writer.
+3. **Machine user** — create a bot account and give it two separate grants:
+   repo collaborator (**Write**) and *project* collaborator (**Write**, under
+   the project's own Manage access). Repo access does not imply board access.
+   This is not optional: GitHub forbids reviewing your own PRs, so a daemon
+   running under your token would make its own PRs unreviewable by you.
+4. **Token** — a **classic** PAT on the bot with scopes `repo`, `project`, and
+   `read:org`. Fine-grained PATs cannot reach a *user-owned* board (their
+   Projects permission only covers the token owner's own projects), and
+   `read:org` is required even for a user-owned board because `gh project`
+   classifies the owner with a query that touches `organization`. Export it as
+   `GH_TOKEN` — never put it in `config.json`.
+5. **Config** — set `owner`, `repo`, `project_number`, `bot_login`, `reviewer`,
+   and the agent commands in `agents/config.json`.
+6. **Labels** — create `meeseeks:spec-me`, `meeseeks:failed`,
+   `meeseeks:blocked`.
+
+## Running
+
+```bash
+GH_TOKEN=<bot token> python3 agents/daemon.py   # poll, run agents, render board
+python3 agents/release.py 42                    # release a stranded claim
+cd agents && python3 -m unittest discover -s tests
+```
 
 ## Layout
 
 ```
-CLAUDE.md            workflow rules the planner must follow
-agents/              the orchestrator (daemon, worker, worktree, integrate…)
-agents/config.json   concurrency, poll cadence, integration mode, agent command
-docs/spec/           design docs
-docs/plan/
-  drafts/            plans being written / reviewed
-  ready-for-work/    approved, waiting for an agent
-  in-progress/       claimed by a worker
-  done/              completed (audit trail; gates depends-on)
-  failed/            verify or integration failed (worktree + log kept)
-.claude/             enabled plugins (superpowers, frontend-design) + skills
-opencode.json        OpenCode permissions for implementer agents
+CLAUDE.md              workflow rules the planner must follow
+agents/daemon.py       the daemon
+agents/release.py      manual claim release
+agents/config.json     board binding, concurrency, agent commands
+agents/prompts/        spec.md and impl.md — the agent prompts
+agents/orchestrator/   github adapter, evidence, projection, claiming, jobs
+agents/state/          this machine's claims (gitignored)
+docs/spec/             design docs, one per issue
+docs/plan/             implementation plans, one per issue
+docs/plan/archive/     the retired file-based workflow
 ```
 
-## Plan frontmatter
+## How claiming works
 
-```yaml
----
-id: my-feature            # unique, kebab-case
-depends-on: [other-id]    # omit or [] if none
----
-```
+Creating a git ref is the only compare-and-swap GitHub offers: the API refuses
+to create one that exists. The daemon claims work by creating
+`meeseeks/<kind>/<issue>-<slug>` before any agent runs, so a daemon on another
+machine that loses the race spends nothing. The lock **is** the work branch.
 
-A plan is claimed only once every `depends-on` id has landed in `done/`.
-
-## Running the orchestrator
-
-```bash
-python3 agents/run_once.py    # claim + run the next eligible plan (manual)
-python3 agents/daemon.py      # poll ready-for-work/ forever, up to max_concurrency
-python3 agents/dashboard.py   # read-only web UI + background pollers
-```
-
-cd agents && python3 -m unittest discover -s tests
-
-See [`agents/README.md`](agents/README.md) for config keys and operational
-limitations (primary-checkout ownership, crash recovery, failed-state cleanup).
-
-## Using it in a project
-
-This is the environment, not a single project — reuse it wherever you want the
-same flow. Copy the repo (or its structure), then:
-
-- Keep `CLAUDE.md` so the planner follows spec → plan → hand-off.
-- Point `agents/config.json` `agent_command` / `verify_command` at the target
-  project's tooling, and set `integration_mode` (`pr` or `auto-merge`) and
-  `base_branch`.
-- Drop specs in `docs/spec/`, plans in `docs/plan/`, and start the daemon.
+A daemon releases only its own orphaned claims (recorded in `agents/state/`).
+Another machine's stale claim needs `release.py`, deliberately: "stale" and
+"slow" are indistinguishable from the outside.
 
 ## Contributing
 

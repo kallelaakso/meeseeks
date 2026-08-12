@@ -1,67 +1,69 @@
+"""Reclaiming this machine's own orphans after a crash.
+
+The daemon is the only process that spawns workers, so at startup every claim
+in its ledger is orphaned by definition. The only question is whether the work
+escaped — if it reached the remote, re-running would duplicate it.
+"""
+
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
 from typing import Callable
 
+from orchestrator import claiming, ledger
 from orchestrator.config import Config
-from orchestrator.fsops import append_log, move_into
-from orchestrator.layout import Layout
-from orchestrator.plans import list_plans
-from orchestrator.worktree import branch_name
+from orchestrator.fsops import append_log
+from orchestrator.github import GitHub
 
-GitRunner = Callable[[list[str]], subprocess.CompletedProcess]
+GitRunner = Callable[[list[str]], tuple[bool, str]]
 
 
-def _default_git(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], capture_output=True, text=True)
+def default_git(repo: Path) -> GitRunner:
+    def run(args: list[str]) -> tuple[bool, str]:
+        proc = subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, text=True)
+        return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+    return run
 
 
-def _branch_landed(repo: Path, remote: str, base_branch: str, branch: str,
-                   git: GitRunner) -> bool:
-    """True if the branch's work escaped the worker: pushed to remote or merged.
+def work_escaped(git: GitRunner, cfg: Config, branch: str) -> bool:
+    """True if the branch carries commits beyond base on the remote.
 
-    Used to decide whether a stranded plan is safe to re-run. If the branch was
-    already pushed (a PR may exist) or its commits are an ancestor of the base
-    (merged), re-running would duplicate landed work — so the caller fails it for
-    human triage instead.
+    Deliberately *not* `merge-base --is-ancestor branch base`: a claim branch
+    with no commits sits exactly at base and is trivially an ancestor of it, so
+    that test reports untouched work as landed and dead-ends the ticket.
     """
-    pushed = git(["-C", str(repo), "ls-remote", "--heads", remote, branch])
-    if pushed.returncode == 0 and pushed.stdout.strip():
-        return True
-    exists = git(["-C", str(repo), "rev-parse", "--verify", "--quiet", branch])
-    if exists.returncode != 0:
+    ok, _ = git(["fetch", cfg.remote, branch])
+    if not ok:
         return False
-    merged = git(["-C", str(repo), "merge-base", "--is-ancestor",
-                  branch, base_branch])
-    return merged.returncode == 0
+    ok, out = git(["rev-list", "--count",
+                   f"{cfg.remote}/{cfg.base_branch}..FETCH_HEAD"])
+    return ok and out.strip() not in ("", "0")
 
 
-def recover_stranded(layout: Layout, config: Config, *,
-                     git: GitRunner = _default_git) -> list[str]:
-    """Reclaim plans orphaned in in-progress/ at startup. Never raises.
-
-    Any plan in in-progress/ when the daemon starts has no live worker (the
-    daemon is the sole writer and tracks workers in memory). Unlanded plans go
-    back to ready-for-work/; plans whose work already landed go to failed/ for
-    triage. A per-plan probe error leaves that plan in place for the next start.
-    Returns the ids moved back to ready-for-work/.
-    """
-    recovered: list[str] = []
-    for plan in list_plans(layout.in_progress):
-        log_path = layout.logs / f"{plan.id}.log"
-        branch = branch_name(plan.id)
+def recover(gh: GitHub, cfg: Config, repo: Path, ledger_path: Path,
+            logs_dir: Path, git: GitRunner | None = None) -> dict[int, str]:
+    """Resolve every claim left in the ledger. Returns issue -> outcome."""
+    git = git or default_git(repo)
+    outcomes: dict[int, str] = {}
+    for number, claim in ledger.load(ledger_path).items():
+        log_path = logs_dir / f"{number}.log"
         try:
-            if _branch_landed(layout.repo, config.remote, config.base_branch,
-                              branch, git):
+            if work_escaped(git, cfg, claim.branch):
                 append_log(log_path,
-                           "interrupted after work landed; triage manually")
-                move_into(plan.path, layout.failed)
+                           "interrupted after work reached the remote")
+                from orchestrator.janitor import fail
+                fail(gh, cfg, number, "interrupted after work reached the "
+                     "remote; needs triage", claim.branch, log_path)
+                ledger.forget(ledger_path, number)
+                outcomes[number] = "failed"
             else:
-                append_log(log_path, "recovered stranded in-progress plan")
-                move_into(plan.path, layout.ready)
-                recovered.append(plan.id)
-        except Exception as exc:  # noqa: BLE001 — leave for next restart
-            append_log(log_path,
-                       f"recovery probe failed, leaving in-progress: {exc}")
-    return recovered
+                claiming.release(gh, ledger_path, number, claim.branch)
+                append_log(log_path, "released stranded claim")
+                outcomes[number] = "released"
+        except Exception as exc:  # noqa: BLE001 — retry on the next start
+            append_log(log_path, f"recovery probe failed: {exc}")
+            outcomes[number] = "deferred"
+    return outcomes

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from orchestrator.evidence import (
@@ -114,6 +115,51 @@ class TestGather(unittest.TestCase):
         self.assertIn(1, ev.specs_landed)
         self.assertIn(1, ev.open_prs)
         self.assertEqual(ev.open_prs[1][0].kind, "impl")
+
+
+class TestGatherCompleteness(unittest.TestCase):
+    """Evidence must cover issues the label queue never sees."""
+
+    def _gather(self, reviews_json: str):
+        def fake_gh_runner(args, input=None):
+            if "issue" in args and "list" in args:
+                return True, json.dumps([
+                    {"number": 1, "title": "open", "body": "", "labels": [],
+                     "state": "OPEN"},
+                    {"number": 2, "title": "closed", "body": "", "labels": [],
+                     "state": "CLOSED"},
+                ])
+            if "pr" in args and "list" in args and "open" in args:
+                return True, json.dumps([{
+                    "number": 10, "headRefName": "meeseeks/impl/1-slug",
+                    "headRefOid": "abc", "mergeable": "MERGEABLE",
+                }])
+            if "pr" in args and "view" in args and "commits" in args:
+                return True, '"2024-01-01T00:00:00Z"'
+            if "pr" in args and "view" in args and "reviews" in args:
+                return True, reviews_json
+            return True, "[]"
+
+        def fake_git_runner(args):
+            return True, ""
+
+        from orchestrator.github import GitHub
+        return gather(GitHub("o", "r", run=fake_gh_runner), fake_git_runner,
+                      "main")
+
+    def test_gathers_closed_issues(self):
+        ev = self._gather('{"reviews":[]}')
+        self.assertTrue(ev.issues[2].closed)
+        self.assertFalse(ev.issues[1].closed)
+
+    def test_fetches_reviews_so_revisions_can_trigger(self):
+        ev = self._gather(json.dumps({"reviews": [
+            {"state": "CHANGES_REQUESTED", "submittedAt": "2024-06-01T00:00:00Z"},
+            {"state": "COMMENTED", "submittedAt": "2024-07-01T00:00:00Z"},
+        ]}))
+        pr = ev.open_prs[1][0]
+        self.assertEqual(pr.last_change_request_at, "2024-06-01T00:00:00Z")
+        self.assertTrue(pr.has_unaddressed_changes)
 
 
 if __name__ == "__main__":
