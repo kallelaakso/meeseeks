@@ -137,8 +137,14 @@ def poll_once(gh: GitHub, board: Board, cfg: Config,
         proc.join()
         print(f"daemon: #{number} finished (exit {proc.exitcode})")
 
+    # Evidence includes "which spec files exist on base", read from the local
+    # remote-tracking ref. Without a fetch first that ref is whatever it was at
+    # startup, so every merge stays invisible until something else refreshes it.
+    git(["fetch", cfg.remote, cfg.base_branch])
+
     ev = gather(gh, git, f"{cfg.remote}/{cfg.base_branch}")
 
+    janitor.disarm(gh, cfg, ev)
     janitor.block_capped(gh, cfg, janitor.cap_exceeded(ev, cfg))
     janitor.publish_artifacts(gh, cfg, ev)
     janitor.release_finished_claims(gh, cfg, ev, REPO, LEDGER)

@@ -10,6 +10,7 @@ from orchestrator.evidence import Evidence, IssueEv, PullEv
 from orchestrator.github import GitHub
 from orchestrator.janitor import (
     block_capped,
+    disarm,
     cap_exceeded,
     conflicting,
     fail,
@@ -144,6 +145,34 @@ class TestPublishArtifacts(unittest.TestCase):
         calls: list = []
         publish_artifacts(_gh(calls), _config(), evidence([issue]))
         self.assertEqual(calls, [])
+
+
+class TestDisarm(unittest.TestCase):
+    """The arm label means 'needs a spec', not 'has one'."""
+
+    def _issue(self, labels=("arm",)):
+        return IssueEv(1, "T", "b", frozenset(labels), False)
+
+    def test_removes_label_once_spec_pr_is_open(self):
+        calls: list = []
+        ev = evidence([self._issue()],
+                      open_prs={1: [pull(kind="spec")]})
+        self.assertEqual(disarm(_gh(calls), _config(), ev), [1])
+        self.assertTrue(any("--remove-label" in c[0] for c in calls))
+
+    def test_removes_label_once_spec_landed(self):
+        ev = evidence([self._issue()], specs_landed=[1])
+        self.assertEqual(disarm(_gh([]), _config(), ev), [1])
+
+    def test_keeps_label_while_no_spec_work_exists(self):
+        calls: list = []
+        self.assertEqual(disarm(_gh(calls), _config(),
+                                evidence([self._issue()])), [])
+        self.assertEqual(calls, [])
+
+    def test_ignores_unarmed_issues(self):
+        ev = evidence([self._issue(labels=())], specs_landed=[1])
+        self.assertEqual(disarm(_gh([]), _config(), ev), [])
 
 
 class TestReleaseFinishedClaims(unittest.TestCase):

@@ -33,6 +33,10 @@ def spec_queue(ev: Evidence, labels: dict[str, str]) -> list[int]:
             continue
         if _claimed(ev, number, "spec") or _has_open_pr(ev, number, "spec"):
             continue
+        # A landed spec is done, whatever the label still says. Without this a
+        # stale arm label would send the agent back to rewrite merged work.
+        if number in ev.specs_landed:
+            continue
         out.append(number)
     return out
 

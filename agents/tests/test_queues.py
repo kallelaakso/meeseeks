@@ -59,6 +59,12 @@ class TestSpecQueue(unittest.TestCase):
                       claim_refs={1: {"spec"}})
         self.assertEqual(spec_queue(ev, LABELS), [])
 
+    def test_landed_spec_suppresses(self):
+        """A stale arm label must not send the agent back over merged work."""
+        ev = evidence([issue(1, labels=["meeseeks:spec-me"])],
+                      specs_landed=[1])
+        self.assertEqual(spec_queue(ev, LABELS), [])
+
     def test_open_spec_pr_suppresses(self):
         ev = evidence([issue(1, labels=["meeseeks:spec-me"])],
                       open_prs={1: [pull(10, "spec", 1)]})

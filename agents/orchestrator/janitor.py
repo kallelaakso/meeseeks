@@ -140,6 +140,28 @@ def publish_artifacts(gh: GitHub, cfg: Config, ev: Evidence) -> list[int]:
     return updated
 
 
+def disarm(gh: GitHub, cfg: Config, ev: Evidence) -> list[int]:
+    """Drop the arm label once spec work exists for an issue.
+
+    The label means "needs a spec", not "has one". Leaving it on makes the spec
+    queue return the issue forever: the daemon re-claims it every poll, and
+    would rewrite an already-merged spec the moment the claim cleared.
+    """
+    disarmed = []
+    for number, issue in sorted(ev.issues.items()):
+        if cfg.labels["arm"] not in issue.labels:
+            continue
+        has_spec_work = (
+            number in ev.specs_landed
+            or any(p.kind == "spec" for p in ev.open_prs.get(number, []))
+        )
+        if not has_spec_work:
+            continue
+        gh.remove_label(number, cfg.labels["arm"])
+        disarmed.append(number)
+    return disarmed
+
+
 def release_finished_claims(gh: GitHub, cfg: Config, ev: Evidence,
                             repo: Path, ledger_path: Path) -> list[int]:
     """Drop our own claims whose work is over, and clean up their worktrees.
