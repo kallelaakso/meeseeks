@@ -33,7 +33,7 @@ wholesale:
 - **Runtime state is written inside the vendored directory** —
   `agents/state/claims.json` and `agents/logs/` (`daemon.py:29-30`,
   `release.py:23`), which the adopting project must then gitignore by those
-  paths.
+  paths (`.gitignore:2-3`).
 - **The code assumes it lives exactly one level below the project root.**
   `REPO = Path(__file__).resolve().parents[1]` (`daemon.py:28`,
   `release.py:22`), and `job.py:90` reads the prompt template as
@@ -66,14 +66,17 @@ file in it, and never move it.
   root from project root, but does not do it.
 - **Multi-repo / multi-board.** Still one repo, one project, one base branch.
 - **Making `docs/spec/` and `docs/plan/` configurable.** They are hardcoded in
-  `tickets.py:30-39` and `evidence.py:118`, and the spec-landed projection
+  `tickets.py:30-39` and `evidence.py:117-118`, and the spec-landed projection
   depends on that glob. Out of scope here; see Unresolved questions.
+- **Fixing the two latent bugs found while writing this spec** (hardcoded
+  `origin` in `evidence.py:113`, and the git-runner calling convention). Both
+  are noted under Unresolved questions rather than smuggled into this diff.
 - **A generator / `meeseeks init` command.** The config is eight keys; a README
   block is enough.
 - **Any change to the workflow itself** — labels, projection, claiming, PR
   semantics all stay exactly as specified in the board-workflow design.
 - **Backwards compatibility with `agents/config.json`.** It is deleted, not
-  deprecated (see Design).
+  deprecated (see Migration).
 
 ## Design
 
@@ -120,8 +123,8 @@ Paths(root)
 
 `Paths` is a frozen dataclass of `Path`s, so it pickles — required, because
 `daemon.spawn` passes its arguments to a `multiprocessing.Process`
-(`daemon.py:100-107`) and the child currently reads module globals `REPO`,
-`LOGS`, `LEDGER` that will no longer exist.
+(`daemon.py:100-107`) and the child (`_work`, `daemon.py:82-97`) currently reads
+module globals `REPO` and `LOGS` that will no longer exist.
 
 The daemon additionally refuses to start when `<root>/.git` is absent: every
 git operation downstream assumes it, and failing at startup beats failing inside
@@ -137,9 +140,9 @@ a worker.
 ```
 
 A directory rather than a root-level `meeseeks.json` because there are already
-four things, two of them committed and two not, and one gitignore prefix
-(`.meeseeks/logs/`, `.meeseeks/state/`) beats scattering them. It also gives the
-name the board-workflow design already reserved for this.
+four things, two of them committed and two not, and one gitignore prefix beats
+scattering them. It also gives the name the board-workflow design already
+reserved for this.
 
 ### Defaults in code, not in a shipped JSON file
 
@@ -177,7 +180,7 @@ default that silently runs the wrong agent is worse than a startup error.
 
 `.meeseeks/rules.md` is rendered into both shipped prompts through a new
 `{project_rules}` token, alongside the existing `{feedback}` token
-(`job.py:91-97`, and `render_prompt` already leaves unknown tokens alone —
+(`job.py:91-97`; `render_prompt` already leaves unknown tokens alone —
 `job.py:26-35`, tested at `tests/test_job.py:28-29`). Absent file → empty
 string, exactly like `feedback` today.
 
@@ -185,9 +188,9 @@ Append rather than replace, because the shipped prompts encode the orchestrator
 contract — do not commit, do not push, write exactly these two files, make
 `{verify_command}` pass. A `prompts_dir` override would let a project silently
 drop those lines and produce runs that fail in confusing ways (an agent that
-commits breaks `_commit`'s "did the agent leave work" check at `job.py:44-54`).
-The appendix carries what is genuinely local: stack, test runner, house style,
-where docs live.
+commits breaks `_commit`'s "did the agent leave work over base" check at
+`job.py:44-54`). The appendix carries what is genuinely local: stack, test
+runner, house style, where docs live.
 
 ### Rejected alternatives
 
@@ -231,29 +234,32 @@ project, so they are already top-level and project-owned.
 
 | Path | Change |
 |---|---|
-| `agents/orchestrator/paths.py` | **New.** Install root, `Paths`, `find_root`, `rules_text`. |
-| `agents/orchestrator/config.py:12-30` | `columns`/`labels` gain defaults; `base_branch` defaults to `main`; field order shifts (all callers use kwargs). |
+| `agents/orchestrator/paths.py` | **New.** `INSTALL_ROOT`, `PROMPTS_DIR`, `Paths`, `find_root`, `rules_text`. |
+| `agents/orchestrator/config.py:12-30` | `columns`/`labels` gain defaults; `base_branch` defaults to `main`; field order shifts (all callers use kwargs — verified: `tests/test_job.py:56`, `test_reconcile.py:33`, `test_daemon.py:22`, `test_janitor.py:36`, `config.py:83`). |
 | `agents/orchestrator/config.py:56-83` | Key-wise merge of `columns`/`labels`; reject unknown keys in both. |
 | `agents/orchestrator/job.py:90` | Prompt template read from the install root, not `repo / "agents" / "prompts"`. |
 | `agents/orchestrator/job.py:91-97` | New `project_rules` token from `.meeseeks/rules.md`. |
-| `agents/prompts/spec.md:39-44`, `agents/prompts/impl.md:11-22` | `{project_rules}` inserted; the hardcoded "standard library only" line moves out of the shipped prompt. |
+| `agents/prompts/spec.md:39`, `agents/prompts/impl.md:11` | `{project_rules}` inserted before `# Rules`; the hardcoded "standard library only" clause (`impl.md:16`) moves out of the shipped prompt. |
 | `agents/daemon.py:28-30` | `REPO`/`LEDGER`/`LOGS` module constants deleted. |
-| `agents/daemon.py:37-48, 82-167` | `git`, `base_sha`, `_work`, `spawn`, `fill`, `poll_once` take `Paths` (and a git runner) instead of reading globals. |
-| `agents/daemon.py:51-68, 169-171` | `validate` also checks `<root>/.git`; `main` resolves the root and reports failure actionably. |
-| `agents/release.py:22-23, 43-51` | Same path treatment. |
+| `agents/daemon.py:37-48, 82-172` | `git`, `base_sha`, `_work`, `spawn`, `fill`, `poll_once` take `Paths` (and a git runner) instead of reading globals. |
+| `agents/daemon.py:51-67, 175-186` | `validate` also checks `<root>/.git`; `main` resolves the root, loads `paths.config`, and prints the resolved root in the startup line. |
+| `agents/release.py:22-23, 26-28, 43-52` | Same path treatment; `remote_claim_branches` takes the root. |
 | `agents/config.json` | **Deleted**, its non-default keys moved to `.meeseeks/config.json`. |
 | `.meeseeks/config.json` | **New.** This repo's own binding, minimal form. |
-| `.gitignore:1-3` | `agents/logs/`, `agents/state/` → `.meeseeks/logs/`, `.meeseeks/state/`; add `.meeseeks-prompt.md`. |
+| `.gitignore:2-3` | `agents/logs/`, `agents/state/` → `.meeseeks/logs/`, `.meeseeks/state/`; add `.meeseeks-prompt.md`. |
 | `agents/tests/test_config.py:10-34, 109-113` | Fixture shrinks; `TestRealConfig` reads `.meeseeks/config.json`. |
 | `agents/tests/test_job.py:67-70` | Prompts no longer created under the fake project root. |
+| `agents/tests/test_daemon.py:33, 49, 66` | `validate` call sites gain `Paths`. |
 | `agents/tests/test_paths.py` | **New.** |
-| `README.md` (Setup 5, Layout, Running) | Config location, install shape, gitignore lines. |
-| `agents/README.md:27-46` | Config-keys table gains defaults; add the two-roots section. |
+| `README.md:82-83, 95-108, 117` | Config location, layout block, claim-state path. |
+| `agents/README.md:9-22, 29-43` | Add `paths.py` to the module table; config-keys table gains a Default column and the new path. |
 
 `orchestrator/tickets.py`, `projection.py`, `queues.py`, `evidence.py`,
-`claiming.py`, `janitor.py`, `reconcile.py`, `projects.py` and `github.py` are
-untouched: they take paths and config as arguments already. That is the
-measure of whether this refactor is the right size.
+`claiming.py`, `janitor.py`, `reconcile.py`, `recovery.py`, `projects.py` and
+`github.py` are untouched: they take paths, config and a git runner as arguments
+already (e.g. `recovery.recover(gh, cfg, repo, ledger_path, logs_dir, git)` —
+`recovery.py:46-47`). That is the measure of whether this refactor is the right
+size.
 
 ## Migration
 
@@ -261,9 +267,9 @@ This repo is its own first adopter. In the same PR: create
 `.meeseeks/config.json` with the eight keys carried over from
 `agents/config.json:2-30`, delete `agents/config.json`, move the gitignore
 entries. Nothing is dual-read — a running daemon keeps working from its already
-imported code and picks up the new layout on the next restart, which is when
-the human restarts it anyway. A fallback to the old path would be one more
-branch to maintain for a single-user migration that takes one commit.
+imported code and picks up the new layout on the next restart, which is when the
+human restarts it anyway. A fallback to the old path would be one more branch to
+maintain for a single-user migration that takes one commit.
 
 Note that the worktree an agent runs in contains a committed copy of
 `.meeseeks/config.json`, and nothing in `job.py` ever loads it. The daemon's
@@ -285,10 +291,27 @@ copy at the project root is the only one that decides anything.
    invocations? Kept required on the reasoning above, but this is the one
    judgment call that trades setup friction against a costly wrong default.
 5. **`docs/spec/` and `docs/plan/` as config.** Declared a non-goal here, but a
-   project that keeps docs elsewhere still has to edit `tickets.py`. Worth its
-   own ticket if it matters — it touches the projection, so it is not a config
-   key that can be added casually.
+   project that keeps docs elsewhere still has to edit `tickets.py:30-39`. Worth
+   its own ticket if it matters — it touches the projection (`evidence.py:117-118`
+   feeds the spec-landed column), so it is not a config key that can be added
+   casually.
 6. **Should `agents/` be renamed** (`meeseeks/`, `tools/meeseeks/`) once it is
    pure program? A directory called `agents/` at the root of someone else's
    project reads like *their* agents. Left alone here because renaming it and
    moving the config in one PR makes the diff much harder to review.
+7. **Two pre-existing bugs found while reading, deliberately not fixed here.**
+   Both concern `evidence.gather`'s git runner and want a decision before
+   anything touches them:
+   - `evidence.py:113` hardcodes the remote name `"origin"` in the claim-ref
+     `ls-remote`, ignoring `cfg.remote`. A project that pushes to a differently
+     named remote gets an empty claim-ref set and therefore a wrong projection —
+     a config key that exists but is not honoured.
+   - The runner passed from `daemon.py:145` (`daemon.git`, `daemon.py:37-40`)
+     prepends `git -C <repo>`, while `evidence.py:112-119` passes argument lists
+     that *begin with* `"git"`, producing `git -C <repo> git ls-remote …`. The
+     tests do not catch it because `tests/test_evidence.py:100-110` fakes the
+     runner and matches on `"ls-remote" in args`. If that reading is right, claim
+     refs and landed specs are silently always empty in production. Fixing it is
+     a one-line change in the opposite direction from this refactor, so it wants
+     its own ticket and its own test — but step 5 of the plan moves this exact
+     code, so it must not be "tidied up" in passing.
