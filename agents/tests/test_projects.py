@@ -17,6 +17,27 @@ def _fake_runner(responses: list[tuple[bool, str]]):
     return runner, calls
 
 
+class TestExplain(unittest.TestCase):
+    def test_unknown_owner_type_names_the_missing_scope(self):
+        from orchestrator.projects import explain
+        out = explain("unknown owner type")
+        self.assertIn("read:org", out)
+
+    def test_insufficient_scopes_gets_a_hint(self):
+        from orchestrator.projects import explain
+        self.assertIn("scopes", explain("INSUFFICIENT_SCOPES: nope"))
+
+    def test_other_errors_pass_through(self):
+        from orchestrator.projects import explain
+        self.assertEqual(explain("connection reset"), "connection reset")
+
+    def test_load_board_surfaces_the_hint(self):
+        runner, _ = _fake_runner([(False, "unknown owner type")])
+        with self.assertRaises(GitHubError) as cm:
+            load_board(GitHub("acme", "repo", run=runner), 1, "Status", [])
+        self.assertIn("read:org", str(cm.exception))
+
+
 class TestProjects(unittest.TestCase):
     def test_load_board_maps_options(self):
         runner, calls = _fake_runner([

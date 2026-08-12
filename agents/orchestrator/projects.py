@@ -6,6 +6,26 @@ from dataclasses import dataclass
 from orchestrator.github import GitHub, GitHubError
 
 
+def explain(output: str) -> str:
+    """Turn gh's opaque project errors into something actionable.
+
+    `gh project` classifies an owner with one query covering both `user` and
+    `organization`. The organization half needs `read:org`, and GitHub rejects
+    the whole query without it — leaving gh unable to tell what the owner is,
+    which it reports as "unknown owner type".
+    """
+    if "unknown owner type" in output:
+        return (
+            f"{output.strip()}\n"
+            "  → the token is missing the 'read:org' scope. gh needs it to "
+            "classify the project owner, even for a user-owned board.\n"
+            "  → required scopes: repo, project, read:org"
+        )
+    if "INSUFFICIENT_SCOPES" in output or "not been granted" in output:
+        return f"{output.strip()}\n  → check the token's scopes"
+    return output
+
+
 def project_id(gh: GitHub, project_number: int) -> str:
     """The project's node id, needed for item-edit.
 
@@ -18,7 +38,7 @@ def project_id(gh: GitHub, project_number: int) -> str:
         "--format", "json",
     ])
     if not ok:
-        raise GitHubError(f"project view failed: {out}")
+        raise GitHubError(f"project view failed: {explain(out)}")
     return json.loads(out)["id"]
 
 
@@ -41,7 +61,7 @@ def load_board(
         "--format", "json",
     ])
     if not ok:
-        raise GitHubError(f"field-list failed: {out}")
+        raise GitHubError(f"field-list failed: {explain(out)}")
     data = json.loads(out)
     fields = {f["name"]: f for f in data.get("fields", [])}
     field = fields.get(status_field)
@@ -70,7 +90,7 @@ def item_status(
         "--format", "json",
     ])
     if not ok:
-        raise GitHubError(f"item-list failed: {out}")
+        raise GitHubError(f"item-list failed: {explain(out)}")
     data = json.loads(out)
     result: dict[int, tuple[str, str]] = {}
     for item in data.get("items", []):

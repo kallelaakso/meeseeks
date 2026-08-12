@@ -68,13 +68,20 @@ with labels, reviews, and merges.
    if any are missing and never creates them itself.
 2. **Built-in workflows** — keep *auto-add to project* on; turn **off** every
    status-changing workflow and auto-archive, so meeseeks is the only writer.
-3. **Machine user** — create a bot account, add it as a collaborator, and issue
-   a fine-grained PAT (Contents RW, Pull requests RW, Issues RW, Projects RW).
+3. **Machine user** — create a bot account and give it two separate grants:
+   repo collaborator (**Write**) and *project* collaborator (**Write**, under
+   the project's own Manage access). Repo access does not imply board access.
    This is not optional: GitHub forbids reviewing your own PRs, so a daemon
    running under your token would make its own PRs unreviewable by you.
-4. **Config** — set `owner`, `repo`, `project_number`, `bot_login`, `reviewer`,
+4. **Token** — a **classic** PAT on the bot with scopes `repo`, `project`, and
+   `read:org`. Fine-grained PATs cannot reach a *user-owned* board (their
+   Projects permission only covers the token owner's own projects), and
+   `read:org` is required even for a user-owned board because `gh project`
+   classifies the owner with a query that touches `organization`. Export it as
+   `GH_TOKEN` — never put it in `config.json`.
+5. **Config** — set `owner`, `repo`, `project_number`, `bot_login`, `reviewer`,
    and the agent commands in `agents/config.json`.
-5. **Labels** — create `meeseeks:spec-me`, `meeseeks:failed`,
+6. **Labels** — create `meeseeks:spec-me`, `meeseeks:failed`,
    `meeseeks:blocked`.
 
 ## Running
