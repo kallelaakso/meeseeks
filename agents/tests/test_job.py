@@ -64,11 +64,11 @@ class TestRunJob(unittest.TestCase):
         self.root.mkdir()
         init_repo(self.root)
         add_origin(self.root)
-        prompts = self.root / "agents" / "prompts"
-        prompts.mkdir(parents=True)
-        (prompts / "impl.md").write_text("do the thing for #{issue}")
-        (prompts / "spec.md").write_text("spec the thing for #{issue}")
-        self.log = self.root / "agents" / "logs" / "1.log"
+        self.prompts_dir = Path(tempfile.mkdtemp()) / "prompts"
+        self.prompts_dir.mkdir()
+        (self.prompts_dir / "impl.md").write_text("do the thing for #{issue}")
+        (self.prompts_dir / "spec.md").write_text("spec the thing for #{issue}")
+        self.log = self.root / "logs" / "1.log"
         self.gh_calls: list[list[str]] = []
         # Claim: create the branch on the remote, as claiming.claim would.
         self.branch = "meeseeks/impl/1-slug"
@@ -85,9 +85,11 @@ class TestRunJob(unittest.TestCase):
 
         return GitHub("o", "r", run=runner)
 
-    def _run(self, cfg: Config, gh: GitHub | None = None) -> str:
+    def _run(self, cfg: Config, gh: GitHub | None = None,
+             prompts_dir: Path | None = None) -> str:
         return run_job("impl", 1, "slug", "Title", "Body", self.branch, cfg,
-                       gh or self._gh(), self.root, self.log)
+                       gh or self._gh(), self.root, self.log,
+                       prompts_dir=prompts_dir or self.prompts_dir)
 
     def test_opens_pr_when_agent_produces_work(self):
         cfg = _config(impl_agent_command="echo hello > new.txt")
@@ -121,6 +123,25 @@ class TestRunJob(unittest.TestCase):
             ["git", "-C", str(self.root / ".worktrees" / "1-slug"),
              "ls-files"], capture_output=True, text=True).stdout
         self.assertNotIn(".meeseeks-prompt.md", out)
+
+    def test_project_rules_reaches_prompt(self):
+        rules = self.root / ".meeseeks" / "rules.md"
+        rules.parent.mkdir(parents=True)
+        rules.write_text("Use tabs.")
+        (self.prompts_dir / "impl.md").write_text("{project_rules}")
+        cfg = _config(
+            impl_agent_command="cp .meeseeks-prompt.md out.txt")
+        self._run(cfg)
+        out = (self.root / ".worktrees" / "1-slug" / "out.txt").read_text()
+        self.assertIn("Use tabs.", out)
+
+    def test_missing_rules_renders_empty(self):
+        (self.prompts_dir / "impl.md").write_text("{project_rules}")
+        cfg = _config(
+            impl_agent_command="cp .meeseeks-prompt.md out.txt")
+        self._run(cfg)
+        out = (self.root / ".worktrees" / "1-slug" / "out.txt").read_text()
+        self.assertEqual(out, "")
 
 
 if __name__ == "__main__":

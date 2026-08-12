@@ -36,6 +36,10 @@ Step-by-step instructions for a cheaper coding agent that will not have your
 context. Each step names the files it touches and the tests it adds. Include
 the acceptance criteria and the verify command: `{verify_command}`.
 
+# Project-specific instructions
+
+{project_rules}
+
 # Rules
 
 - Modify nothing outside this worktree.

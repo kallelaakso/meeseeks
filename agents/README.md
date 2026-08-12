@@ -8,6 +8,7 @@ files exist on the base branch.
 
 | Module | Responsibility |
 |---|---|
+| `paths.py` | Install root vs project root; `Paths` and `find_root`. |
 | `github.py` | Every `gh` call. The only place the CLI is invoked. |
 | `projects.py` | Projects v2 (GraphQL), isolated so its brittleness cannot spread. |
 | `tickets.py` | Naming and issue-text parsing. Pure. |
@@ -26,24 +27,38 @@ without touching the network.
 
 ## Config keys
 
-`agents/config.json`:
+`.meeseeks/config.json`:
 
-| Key | Notes |
-|---|---|
-| `owner`, `repo`, `project_number` | Board binding. |
-| `bot_login` | Startup fails if `gh api user` disagrees. |
-| `reviewer` | Gets review requests on every PR. |
-| `base_branch`, `remote` | Branch point and push target. |
-| `poll_interval_seconds` | ≥ 5. Default 30 — about 3 API calls per poll. |
-| `max_spec_concurrency`, `max_impl_concurrency` | Separate, so long impl runs cannot starve the spec queue. |
-| `max_revision_attempts` | Rounds of review before giving up (default 3). |
-| `status_field`, `columns` | Column names, resolved to option ids at startup. |
-| `labels` | `arm`, `failed`, `blocked`. |
-| `spec_agent_command`, `impl_agent_command` | `{prompt_file}` is substituted. |
-| `verify_command` | Gates impl PRs. Runs in the worktree. |
+| Key | Default | Notes |
+|---|---|---|
+| `owner` | — | Board binding. |
+| `repo` | — | Board binding. |
+| `project_number` | — | Board binding. |
+| `bot_login` | — | Startup fails if `gh api user` disagrees. |
+| `reviewer` | — | Gets review requests on every PR. |
+| `base_branch` | `main` | Branch point. |
+| `remote` | `origin` | Push target. |
+| `poll_interval_seconds` | `30` | ≥ 5. About 3 API calls per poll. |
+| `max_spec_concurrency` | `1` | Separate, so long impl runs cannot starve the spec queue. |
+| `max_impl_concurrency` | `3` | Separate, so long impl runs cannot starve the spec queue. |
+| `max_revision_attempts` | `3` | Rounds of review before giving up. |
+| `status_field` | `Status` | Project column field name. |
+| `columns` | see `config.py` | Column names, merged key-wise over defaults. |
+| `labels` | see `config.py` | `arm`, `failed`, `blocked`, merged key-wise. |
+| `spec_agent_command` | — | `{prompt_file}` is substituted. |
+| `impl_agent_command` | — | `{prompt_file}` is substituted. |
+| `verify_command` | — | Gates impl PRs. Runs in the worktree. |
 
 Prompts live in `agents/prompts/` rather than in the config, because prompt
 quality is the main lever on output quality and deserves to be diffable.
+
+## Install root vs project root
+
+Shipped files (the daemon, the orchestrator, `prompts/`) are addressed from the
+**install root** — where the code is, resolved from `__file__`. Project files
+(`.meeseeks/`, `docs/`, `.worktrees/`) are addressed from the **project root** —
+where `.meeseeks/config.json` lives, discovered by walking up. `paths.py` is the
+only module that resolves either root.
 
 ## Claiming
 

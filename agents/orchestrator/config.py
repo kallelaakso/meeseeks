@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import json
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 
 COLUMN_KEYS = {"backlog", "spec_review", "ready", "in_progress",
-               "in_review", "blocked", "done"}
+                "in_review", "blocked", "done"}
 LABEL_KEYS = {"arm", "failed", "blocked"}
+
+DEFAULT_COLUMNS = {
+    "backlog": "Backlog",
+    "spec_review": "Spec in review",
+    "ready": "Specs (ready for dev)",
+    "in_progress": "In progress",
+    "in_review": "In review",
+    "blocked": "Blocked",
+    "done": "Done",
+}
+DEFAULT_LABELS = {
+    "arm": "meeseeks:spec-me",
+    "failed": "meeseeks:failed",
+    "blocked": "meeseeks:blocked",
+}
 
 
 @dataclass(frozen=True)
@@ -16,12 +31,12 @@ class Config:
     project_number: int
     bot_login: str
     reviewer: str
-    base_branch: str
     spec_agent_command: str
     impl_agent_command: str
     verify_command: str
-    columns: dict[str, str]
-    labels: dict[str, str]
+    base_branch: str = "main"
+    columns: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_COLUMNS))
+    labels: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_LABELS))
     remote: str = "origin"
     status_field: str = "Status"
     poll_interval_seconds: int = 30
@@ -66,10 +81,20 @@ def load_config(path: Path) -> Config:
     if extra:
         raise ValueError(f"config has unknown keys: {sorted(extra)}")
 
-    missing_columns = COLUMN_KEYS - data["columns"].keys()
+    columns = {**DEFAULT_COLUMNS, **data.get("columns", {})}
+    labels = {**DEFAULT_LABELS, **data.get("labels", {})}
+
+    extra_columns = data.get("columns", {}).keys() - COLUMN_KEYS
+    if extra_columns:
+        raise ValueError(f"config has unknown column keys: {sorted(extra_columns)}")
+    extra_labels = data.get("labels", {}).keys() - LABEL_KEYS
+    if extra_labels:
+        raise ValueError(f"config has unknown label keys: {sorted(extra_labels)}")
+
+    missing_columns = COLUMN_KEYS - columns.keys()
     if missing_columns:
         raise ValueError(f"config columns missing: {sorted(missing_columns)}")
-    missing_labels = LABEL_KEYS - data["labels"].keys()
+    missing_labels = LABEL_KEYS - labels.keys()
     if missing_labels:
         raise ValueError(f"config labels missing: {sorted(missing_labels)}")
 
@@ -80,4 +105,4 @@ def load_config(path: Path) -> Config:
         if int(data.get(key, 1)) < 1:
             raise ValueError(f"{key} must be >= 1")
 
-    return Config(**data)
+    return Config(**{**data, "columns": columns, "labels": labels})

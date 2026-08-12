@@ -79,10 +79,19 @@ with labels, reviews, and merges.
    `read:org` is required even for a user-owned board because `gh project`
    classifies the owner with a query that touches `organization`. Export it as
    `GH_TOKEN` — never put it in `config.json`.
-5. **Config** — set `owner`, `repo`, `project_number`, `bot_login`, `reviewer`,
-   and the agent commands in `agents/config.json`.
+5. **Config** — create `.meeseeks/config.json` at the project root with the
+    eight required keys: `owner`, `repo`, `project_number`, `bot_login`,
+    `reviewer`, `spec_agent_command`, `impl_agent_command`, `verify_command`.
+    `columns`, `labels`, `base_branch`, `remote` and tuning values all default.
 6. **Labels** — create `meeseeks:spec-me`, `meeseeks:failed`,
-   `meeseeks:blocked`.
+    `meeseeks:blocked`.
+
+## Using it in your own project
+
+Vendor `agents/` (copy, submodule, or subtree). Add `.meeseeks/config.json` with
+your eight keys, add the three gitignore lines below, keep a `CLAUDE.md` for
+your planner rules, and optionally add `.meeseeks/rules.md` for agent
+appendices. Never edit anything under `agents/`.
 
 ## Running
 
@@ -92,16 +101,20 @@ python3 agents/release.py 42                    # release a stranded claim
 cd agents && python3 -m unittest discover -s tests
 ```
 
+Launch from anywhere by setting `MEESEEKS_ROOT` to the project directory.
+
 ## Layout
 
 ```
 CLAUDE.md              workflow rules the planner must follow
+.meeseeks/config.json  board binding, agent commands, verify command
+.meeseeks/rules.md     optional project appendix to both prompts
+.meeseeks/logs/        per-issue agent logs (gitignored)
+.meeseeks/state/       this machine's claims (gitignored)
 agents/daemon.py       the daemon
 agents/release.py      manual claim release
-agents/config.json     board binding, concurrency, agent commands
 agents/prompts/        spec.md and impl.md — the agent prompts
 agents/orchestrator/   github adapter, evidence, projection, claiming, jobs
-agents/state/          this machine's claims (gitignored)
 docs/spec/             design docs, one per issue
 docs/plan/             implementation plans, one per issue
 docs/plan/archive/     the retired file-based workflow

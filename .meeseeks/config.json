@@ -1,0 +1,10 @@
+{
+  "owner": "kallelaakso",
+  "repo": "meeseeks",
+  "project_number": 3,
+  "bot_login": "mseeks-bot",
+  "reviewer": "kallelaakso",
+  "spec_agent_command": "claude -p --model opus --permission-mode acceptEdits \"$(cat {prompt_file})\"",
+  "impl_agent_command": "opencode run -m opencode-go/kimi-k2.6 \"$(cat {prompt_file})\"",
+  "verify_command": "cd agents && python3 -m unittest discover -s tests"
+}

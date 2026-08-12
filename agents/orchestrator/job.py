@@ -13,6 +13,7 @@ from pathlib import Path
 from orchestrator.config import Config
 from orchestrator.fsops import append_log
 from orchestrator.github import GitHub
+from orchestrator.paths import PROMPTS_DIR, Paths, rules_text
 from orchestrator.tickets import plan_path, spec_path
 from orchestrator.worktree import create_worktree_on
 
@@ -75,7 +76,8 @@ def pr_text(kind: str, number: int, title: str) -> tuple[str, str]:
 
 def run_job(kind: str, number: int, slug: str, title: str, body: str,
             branch: str, cfg: Config, gh: GitHub, repo: Path,
-            log_path: Path, feedback: str = "") -> str:
+            log_path: Path, feedback: str = "",
+            prompts_dir: Path = PROMPTS_DIR) -> str:
     """Run one job to completion. Returns OPENED, FAILED or EMPTY."""
     worktrees = repo / ".worktrees"
     base_ref = f"{cfg.remote}/{cfg.base_branch}"
@@ -87,13 +89,14 @@ def run_job(kind: str, number: int, slug: str, title: str, body: str,
         append_log(log_path, f"worktree setup failed: {exc}")
         return FAILED
 
-    template = (repo / "agents" / "prompts" / f"{kind}.md").read_text()
+    template = (prompts_dir / f"{kind}.md").read_text()
     prompt = render_prompt(
         template,
         issue=str(number), title=title, body=body, slug=slug,
         spec_path=spec_path(number, slug), plan_path=plan_path(number, slug),
         branch=branch, worktree=str(wt),
         verify_command=cfg.verify_command, feedback=feedback,
+        project_rules=rules_text(Paths(repo)),
     )
     prompt_path = wt / PROMPT_FILE
     prompt_path.write_text(prompt)

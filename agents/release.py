@@ -18,14 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from orchestrator import claiming, ledger, tickets
 from orchestrator.config import load_config
 from orchestrator.github import GitHub
-
-REPO = Path(__file__).resolve().parents[1]
-LEDGER = REPO / "agents" / "state" / "claims.json"
+from orchestrator.paths import ConfigNotFound, Paths, find_root
 
 
-def remote_claim_branches(remote: str, number: int) -> list[str]:
+def remote_claim_branches(root: Path, remote: str, number: int) -> list[str]:
     proc = subprocess.run(
-        ["git", "-C", str(REPO), "ls-remote", "--heads", remote, "meeseeks/*"],
+        ["git", "-C", str(root), "ls-remote", "--heads", remote, "meeseeks/*"],
         capture_output=True, text=True,
     )
     branches = []
@@ -45,11 +43,16 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     number = int(argv[1])
-    cfg = load_config(REPO / "agents" / "config.json")
+    try:
+        paths = Paths(find_root())
+    except ConfigNotFound as exc:
+        print(f"release: {exc}")
+        return 2
+    cfg = load_config(paths.config)
     gh = GitHub(cfg.owner, cfg.repo)
 
-    branches = remote_claim_branches(cfg.remote, number)
-    local = ledger.load(LEDGER).get(number)
+    branches = remote_claim_branches(paths.root, cfg.remote, number)
+    local = ledger.load(paths.ledger).get(number)
     if local and local.branch not in branches:
         branches.append(local.branch)
 
@@ -58,7 +61,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     for branch in branches:
-        claiming.release(gh, LEDGER, number, branch)
+        claiming.release(gh, paths.ledger, number, branch)
         print(f"released {branch}")
     gh.comment(number, f"🔓 claim released manually for #{number}")
     return 0

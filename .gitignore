@@ -1,6 +1,7 @@
 .worktrees/
-agents/logs/
-agents/state/
+.meeseeks/logs/
+.meeseeks/state/
+.meeseeks-prompt.md
 __pycache__/
 *.pyc
 .DS_Store
