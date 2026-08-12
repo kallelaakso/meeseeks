@@ -1,27 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-import tempfile
 from pathlib import Path
-
-from orchestrator.layout import Layout
-
-
-def make_layout(root: Path) -> Layout:
-    """Create the full docs/plan dir tree under root and return a Layout."""
-    layout = Layout.under(root)
-    for d in (
-        layout.ready,
-        layout.in_progress,
-        layout.awaiting_merge,
-        layout.done,
-        layout.closed,
-        layout.failed,
-        layout.worktrees,
-        layout.logs,
-    ):
-        d.mkdir(parents=True, exist_ok=True)
-    return layout
 
 
 def init_repo(root: Path) -> None:
