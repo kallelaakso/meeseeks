@@ -43,6 +43,24 @@ def work_escaped(git: GitRunner, cfg: Config, branch: str) -> bool:
     return ok and out.strip() not in ("", "0")
 
 
+def goal_met(git: GitRunner, cfg: Config, kind: str, number: int) -> bool:
+    """True if the claim's purpose is already achieved on the base branch.
+
+    Asked *before* the escape check, because "some commits exist on the remote"
+    is only a problem when the outcome is still pending. A leftover branch from
+    a superseded pull request looks identical to abandoned work, and flagging a
+    finished ticket for triage strands it in Blocked.
+    """
+    if kind != "spec":
+        return False
+    ok, out = git(["ls-tree", f"{cfg.remote}/{cfg.base_branch}",
+                   "--name-only", "docs/spec/"])
+    if not ok:
+        return False
+    return any(line.strip().split("/")[-1].startswith(f"{number}-")
+               for line in out.splitlines())
+
+
 def recover(gh: GitHub, cfg: Config, repo: Path, ledger_path: Path,
             logs_dir: Path, git: GitRunner | None = None) -> dict[int, str]:
     """Resolve every claim left in the ledger. Returns issue -> outcome."""
@@ -51,7 +69,11 @@ def recover(gh: GitHub, cfg: Config, repo: Path, ledger_path: Path,
     for number, claim in ledger.load(ledger_path).items():
         log_path = logs_dir / f"{number}.log"
         try:
-            if work_escaped(git, cfg, claim.branch):
+            if goal_met(git, cfg, claim.kind, number):
+                claiming.release(gh, ledger_path, number, claim.branch)
+                append_log(log_path, "claim already satisfied; released")
+                outcomes[number] = "released"
+            elif work_escaped(git, cfg, claim.branch):
                 append_log(log_path,
                            "interrupted after work reached the remote")
                 from orchestrator.janitor import fail

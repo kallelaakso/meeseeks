@@ -159,6 +159,39 @@ class TestRecovery(unittest.TestCase):
         self.assertEqual(out, {1: "failed"})
         self.assertEqual(ledger.load(self.path), {})
 
+    def test_satisfied_spec_claim_is_released_not_failed(self):
+        """A leftover branch from a superseded PR looks like escaped work.
+
+        If the spec already landed the ticket is finished, and flagging it
+        strands it in Blocked — which is exactly what happened to issue #9.
+        """
+        ledger.record(self.path, 9, "spec", "meeseeks/spec/9-x", 1, "T")
+
+        def git(args):
+            if "ls-tree" in args:
+                return True, "docs/spec/9-top-level.md\n"
+            if "rev-list" in args:
+                return True, "1"      # unmerged commits exist on the branch
+            return True, ""
+
+        out = recover(GitHub("o", "r", run=lambda *a, **k: (True, "{}")),
+                      _config(), Path("/repo"), self.path, self.logs, git)
+        self.assertEqual(out, {9: "released"})
+
+    def test_unsatisfied_spec_claim_with_escaped_work_still_fails(self):
+        ledger.record(self.path, 9, "spec", "meeseeks/spec/9-x", 1, "T")
+
+        def git(args):
+            if "ls-tree" in args:
+                return True, "docs/spec/1-other.md\n"
+            if "rev-list" in args:
+                return True, "1"
+            return True, ""
+
+        out = recover(GitHub("o", "r", run=lambda *a, **k: (True, "{}")),
+                      _config(), Path("/repo"), self.path, self.logs, git)
+        self.assertEqual(out, {9: "failed"})
+
     def test_work_escaped_is_false_when_fetch_fails(self):
         self.assertFalse(work_escaped(lambda args: (False, "no such ref"),
                                       _config(), "b"))
