@@ -64,8 +64,8 @@ New config file, new schema. Do **not** modify `config.json` or `config.py`.
     "failed": "meeseeks:failed",
     "blocked": "meeseeks:blocked"
   },
-  "spec_agent_command": "opencode run -m <model> \"$(cat {prompt_file})\"",
-  "impl_agent_command": "opencode run -m <model> \"$(cat {prompt_file})\"",
+  "spec_agent_command": "claude -p --model opus --permission-mode acceptEdits \"$(cat {prompt_file})\"",
+  "impl_agent_command": "opencode run -m opencode-go/kimi-k2.6 \"$(cat {prompt_file})\"",
   "verify_command": "cd agents && python3 -m unittest discover -s tests"
 }
 ```
