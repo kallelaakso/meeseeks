@@ -142,9 +142,12 @@ def poll_once(gh: GitHub, board: Board, cfg: Config,
     # startup, so every merge stays invisible until something else refreshes it.
     git(["fetch", cfg.remote, cfg.base_branch])
 
-    ev = gather(gh, git, f"{cfg.remote}/{cfg.base_branch}")
+    ev = gather(gh, git, f"{cfg.remote}/{cfg.base_branch}",
+                remote=cfg.remote)
 
-    janitor.disarm(gh, cfg, ev)
+    # Evidence is a snapshot: an issue disarmed now still carries the label in
+    # `ev`, so it must be excluded explicitly or it is queued one last time.
+    disarmed = set(janitor.disarm(gh, cfg, ev))
     janitor.block_capped(gh, cfg, janitor.cap_exceeded(ev, cfg))
     janitor.publish_artifacts(gh, cfg, ev)
     janitor.release_finished_claims(gh, cfg, ev, REPO, LEDGER)
@@ -165,7 +168,9 @@ def poll_once(gh: GitHub, board: Board, cfg: Config,
             issue.body, pr.branch, cfg, feedback_text(gh, pr.number),
         )
 
-    fill("spec", queues.spec_queue(ev, cfg.labels), ev, cfg, gh, running)
+    armed = [n for n in queues.spec_queue(ev, cfg.labels)
+             if n not in disarmed]
+    fill("spec", armed, ev, cfg, gh, running)
     fill("impl", queues.impl_queue(ev, cfg.labels), ev, cfg, gh, running)
 
     for number, was, want in reconcile(gh, board, ev, cfg, cfg.project_number):

@@ -35,6 +35,10 @@ class TestParseSpecsLanded(unittest.TestCase):
         stdout = "100644 blob abc\tdocs/spec/1-foo.md\n"
         self.assertEqual(_parse_specs_landed(stdout), {1})
 
+    def test_ignores_date_prefixed_legacy_specs(self):
+        out = "docs/spec/2026-06-06-merge-aware-design.md\n"
+        self.assertEqual(_parse_specs_landed(out), set())
+
     def test_ignores_non_matching(self):
         stdout = "abc\tdocs/spec/README.md\n"
         self.assertEqual(_parse_specs_landed(stdout), set())
@@ -160,6 +164,59 @@ class TestGatherCompleteness(unittest.TestCase):
         pr = ev.open_prs[1][0]
         self.assertEqual(pr.last_change_request_at, "2024-06-01T00:00:00Z")
         self.assertTrue(pr.has_unaddressed_changes)
+
+
+class TestGatherAgainstRealGit(unittest.TestCase):
+    """Drives real git with the daemon's real runner.
+
+    Every other test here fakes the runner, which hid a double-`git` argv bug
+    that made claim_refs and specs_landed silently empty in production for the
+    daemon's entire life. Faked plumbing cannot catch plumbing mistakes.
+    """
+
+    def setUp(self):
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from tests.helpers import add_origin, init_repo
+
+        self.root = Path(tempfile.mkdtemp()) / "repo"
+        self.root.mkdir()
+        init_repo(self.root)
+        add_origin(self.root)
+        spec_dir = self.root / "docs" / "spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "42-a-feature.md").write_text("spec\n")
+        (spec_dir / "notes.md").write_text("not a spec\n")
+        for args in (["add", "-A"], ["commit", "-q", "-m", "spec"],
+                     ["push", "-q", "origin", "main"],
+                     ["push", "-q", "origin",
+                      "main:refs/heads/meeseeks/impl/42-a-feature"],
+                     ["push", "-q", "origin", "main:refs/heads/feature/other"],
+                     ["fetch", "-q", "origin"]):
+            subprocess.run(["git", "-C", str(self.root), *args], check=True)
+
+    def _runner(self, args):
+        import subprocess
+        proc = subprocess.run(["git", "-C", str(self.root), *args],
+                              capture_output=True, text=True)
+        return proc.returncode == 0, proc.stdout
+
+    def _gather(self):
+        from orchestrator.github import GitHub
+
+        def gh_runner(args, input=None):
+            return True, "[]"
+
+        return gather(GitHub("o", "r", run=gh_runner), self._runner,
+                      "origin/main")
+
+    def test_finds_landed_specs(self):
+        self.assertIn(42, self._gather().specs_landed)
+
+    def test_finds_claim_refs_and_ignores_foreign_branches(self):
+        ev = self._gather()
+        self.assertEqual(ev.claim_refs, {42: {"impl"}})
 
 
 if __name__ == "__main__":

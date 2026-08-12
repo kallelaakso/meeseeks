@@ -67,7 +67,12 @@ def _parse_claim_refs(stdout: str) -> dict[int, set[str]]:
 def _parse_specs_landed(stdout: str) -> set[int]:
     result: set[int] = set()
     for line in stdout.strip().splitlines():
-        m = re.match(r"(\d+)-", line.strip().split("/")[-1])
+        name = line.strip().split("/")[-1]
+        # Legacy specs are named 2026-06-06-topic.md; without this the leading
+        # year reads as issue 2026.
+        if re.match(r"\d{4}-\d{2}-\d{2}-", name):
+            continue
+        m = re.match(r"(\d+)-", name)
         if m:
             result.add(int(m.group(1)))
     return result
@@ -102,20 +107,24 @@ def gather(
     git_runner: GitRunner,
     base_ref: str,
     labels: list[str] | None = None,
+    remote: str = "origin",
 ) -> Evidence:
     """Snapshot every piece of evidence the projection needs.
+
+    `git_runner` takes argv **without** the `git` binary — it supplies that
+    along with `-C <repo>` itself.
 
     `labels` is unused and kept for call compatibility: issues are gathered in
     one unscoped call, because the projection must see closed and unlabelled
     issues too.
     """
     ok, refs_out = git_runner([
-        "git", "ls-remote", "--heads", "origin", "meeseeks/*",
+        "ls-remote", "--heads", remote, "meeseeks/*",
     ])
     claim_refs = _parse_claim_refs(refs_out if ok else "")
 
     ok, tree_out = git_runner([
-        "git", "ls-tree", base_ref, "--name-only", "docs/spec/",
+        "ls-tree", base_ref, "--name-only", "docs/spec/",
     ])
     specs_landed = _parse_specs_landed(tree_out if ok else "")
 
