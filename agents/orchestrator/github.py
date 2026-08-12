@@ -9,9 +9,15 @@ Runner = Callable[[list[str], Optional[str]], tuple[bool, str]]
 
 
 def default_runner(args: list[str], input: Optional[str] = None) -> tuple[bool, str]:
+    """Run a command, folding stderr into stdout.
+
+    `capture_output` cannot be combined with an explicit `stderr`, so the pipes
+    are wired by hand. Error text must reach the caller: `create_ref` decides a
+    lost race from GitHub's "already exists" message, which arrives on stderr.
+    """
     proc = subprocess.run(
-        args, capture_output=True, text=True,
-        stderr=subprocess.STDOUT, input=input,
+        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, input=input,
     )
     return proc.returncode == 0, proc.stdout
 

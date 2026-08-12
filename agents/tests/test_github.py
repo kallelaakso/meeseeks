@@ -163,5 +163,28 @@ class TestGitHubAdapter(unittest.TestCase):
         self.assertEqual(calls[0][1], "body")
 
 
+class TestDefaultRunner(unittest.TestCase):
+    """The real runner, which every faked test necessarily skips."""
+
+    def test_captures_stdout(self):
+        from orchestrator.github import default_runner
+        ok, out = default_runner(["echo", "hello"])
+        self.assertTrue(ok)
+        self.assertEqual(out.strip(), "hello")
+
+    def test_folds_stderr_into_output(self):
+        from orchestrator.github import default_runner
+        ok, out = default_runner(
+            ["sh", "-c", "echo already exists >&2; exit 1"])
+        self.assertFalse(ok)
+        self.assertIn("already exists", out)
+
+    def test_passes_stdin(self):
+        from orchestrator.github import default_runner
+        ok, out = default_runner(["cat"], input="piped")
+        self.assertTrue(ok)
+        self.assertEqual(out.strip(), "piped")
+
+
 if __name__ == "__main__":
     unittest.main()
