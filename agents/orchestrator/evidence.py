@@ -27,6 +27,7 @@ class PullEv:
     mergeable: str | None
     head_committed_at: str | None
     last_change_request_at: str | None
+    change_requests: int = 0
 
     @property
     def has_unaddressed_changes(self) -> bool:
@@ -91,6 +92,8 @@ def _make_pull_ev(pr: dict, reviews: list[dict] | None = None) -> PullEv | None:
         head_sha=pr.get("headRefOid", ""), mergeable=pr.get("mergeable"),
         head_committed_at=None,
         last_change_request_at=_last_change_request(reviews),
+        change_requests=sum(1 for r in reviews
+                            if r.get("state") == "CHANGES_REQUESTED"),
     )
 
 

@@ -76,6 +76,17 @@ class GitHub:
             "--json", "number,headRefName,headRefOid,title,mergeable,url",
         ], "open_prs failed: ")
 
+    def open_pr_for(self, branch: str) -> dict | None:
+        """The open PR for a branch, if any. Used to stay idempotent when a
+        crash lands between pushing and opening the PR."""
+        prs = self._json([
+            "gh", "pr", "list",
+            "--head", branch,
+            "--state", "open",
+            "--json", "number,url",
+        ], f"open_pr_for {branch} failed: ")
+        return prs[0] if prs else None
+
     def merged_pr_branches(self) -> list[dict]:
         return self._json([
             "gh", "pr", "list",
